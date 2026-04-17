@@ -69,10 +69,11 @@ class ModelConfig:
     check_invalid_addresses: bool = True
     check_bad_exit_code: bool = True
 
-    # Backend selection for model construction. ``"crotor"`` uses the
-    # subprocess backend (Phase 2 bootstrap); ``"python"`` uses the native
-    # Python :class:`RISCVMachineBuilder` (Phase 2 skeleton, incomplete).
-    model_backend: str = "crotor"
+    # Backend selection for model construction. ``"python"`` uses the
+    # native Python :class:`RISCVMachineBuilder` (self-sufficient, default);
+    # ``"crotor"`` delegates to the external C Rotor binary via subprocess
+    # for cases where the native builder's ISA coverage is insufficient.
+    model_backend: str = "python"
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -142,6 +143,18 @@ class RotorInstance:
                         builder.initialize_code_segment(
                             core, low, code_seg.data[offset:offset + length]
                         )
+            # Bake read-only data so loads of string literals / constant
+            # tables see the real values rather than zero.
+            if self.binary.rodata is not None and self.binary.rodata.size > 0:
+                for core in range(self.config.cores):
+                    builder.initialize_data_segment(
+                        core, self.binary.rodata.start, self.binary.rodata.data
+                    )
+            if self.binary.data is not None and self.binary.data.size > 0:
+                for core in range(self.config.cores):
+                    builder.initialize_data_segment(
+                        core, self.binary.data.start, self.binary.data.data
+                    )
         else:
             raise ValueError(
                 f"Unknown model_backend {self.config.model_backend!r}"

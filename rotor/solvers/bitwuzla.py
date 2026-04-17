@@ -1,8 +1,12 @@
 """Bitwuzla BMC backend.
 
-Uses the Bitwuzla Python API when available. Bitwuzla natively parses BTOR2,
-so our job is to hand it the BTOR2 text, unroll to the configured bound,
-and query for models on the ``bad`` properties.
+Bitwuzla is an SMT solver; it does not understand BTOR2's sequential
+extensions (``state``, ``init``, ``next``, ``bad``, ``constraint``). This
+backend works around that by parsing the BTOR2 text into a
+:class:`~rotor.btor2.NodeDAG`, then feeding the DAG to
+:class:`~rotor.solvers.bmc.BitwuzlaUnroller`, which materializes each state's
+value at every BMC step as a fresh Bitwuzla term and queries the solver at
+each depth.
 """
 
 from __future__ import annotations
@@ -13,14 +17,7 @@ from rotor.solvers.base import CheckResult, SolverBackend
 
 
 class BitwuzlaSolver(SolverBackend):
-    """BMC backend backed by Bitwuzla's Python API.
-
-    This is a relatively thin adapter: we translate the BTOR2 model into
-    Bitwuzla terms (via Bitwuzla's BTOR2 parser) and iteratively unroll the
-    transition relation, asserting bad(k) at each step. The first SAT result
-    returns a witness; UNSAT after ``bound`` steps is reported as UNSAT *for
-    that bound* (Bitwuzla is not an unbounded model checker).
-    """
+    """BMC backend backed by Bitwuzla's Python API via incremental unrolling."""
 
     name = "bitwuzla"
 
@@ -33,7 +30,7 @@ class BitwuzlaSolver(SolverBackend):
     def check(self, btor2: str, bound: int) -> CheckResult:
         start = time.monotonic()
         try:
-            import bitwuzla  # type: ignore
+            import bitwuzla  # noqa: F401
         except ImportError:
             return CheckResult(
                 verdict="unknown",
@@ -42,44 +39,21 @@ class BitwuzlaSolver(SolverBackend):
                 stderr="bitwuzla package not installed",
             )
 
-        tm = bitwuzla.TermManager()
-        options = bitwuzla.Options()
-        options.set(bitwuzla.Option.PRODUCE_MODELS, True)
-        parser = bitwuzla.Parser(tm, options)
+        from rotor.btor2 import parse_btor2
+        from rotor.solvers.bmc import BitwuzlaUnroller
+
         try:
-            parser.parse(btor2, format="btor2")
-        except Exception as err:  # pragma: no cover - depends on bitwuzla
+            dag = parse_btor2(btor2)
+        except Exception as err:
             return CheckResult(
                 verdict="unknown",
                 solver=self.name,
                 elapsed=time.monotonic() - start,
-                stderr=f"parse failure: {err}",
+                stderr=f"BTOR2 parse failure: {err}",
             )
 
-        # The Bitwuzla BTOR2 parser builds the unrolled model internally when
-        # given a bound; when not, we fall back to a direct satisfiability
-        # query on the parsed terms.
-        bitwuzla_instance = parser.bitwuzla()
-        try:
-            result = bitwuzla_instance.check_sat()
-        except Exception as err:  # pragma: no cover
-            return CheckResult(
-                verdict="unknown",
-                solver=self.name,
-                elapsed=time.monotonic() - start,
-                stderr=f"solve failure: {err}",
-            )
-
-        verdict = {
-            bitwuzla.Result.SAT: "sat",
-            bitwuzla.Result.UNSAT: "unsat",
-            bitwuzla.Result.UNKNOWN: "unknown",
-        }.get(result, "unknown")
-
-        return CheckResult(
-            verdict=verdict,
-            steps=bound if verdict == "sat" else None,
-            witness=None,
-            solver=self.name,
-            elapsed=time.monotonic() - start,
-        )
+        unroller = BitwuzlaUnroller(dag)
+        result = unroller.check(bound)
+        # Preserve our own timing since the unroller reports its own.
+        result.elapsed = time.monotonic() - start
+        return result
