@@ -17,8 +17,9 @@ env/
 
 # Rotor artifacts
 rotor/_bin/
-tests/fixtures/*.elf
 tests/fixtures/*.o
+# NOTE: tests/fixtures/*.elf is committed on purpose — the integration
+# suite needs reproducible binaries. Regenerate via tests/fixtures/build.sh.
 
 # Editors
 .vscode/
