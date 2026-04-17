@@ -13,6 +13,112 @@ Computational Systems Group, University of Salzburg.
 
 ---
 
+## Quick Start by Example
+
+Install from the repository root:
+
+```bash
+pip install -e .[bitwuzla]      # optional extras: bitwuzla, z3, sarif, dev
+```
+
+### 1. Load a binary and inspect it
+
+```python
+from rotor import RISCVBinary
+
+with RISCVBinary("path/to/program.elf") as binary:
+    print(binary)                         # RISCVBinary('...', rv64, entry=0x10078)
+    print(binary.function_bounds("main")) # (0x101a0, 0x101e4)
+    print(binary.pc_to_source(0x101b4))   # main.c:12:5
+```
+
+Equivalent from the command line:
+
+```bash
+rotor info path/to/program.elf
+rotor btor2 path/to/program.elf -o program.btor2
+```
+
+### 2. Ask a reachability question
+
+`RotorAPI` is the one-line entry point. Conditions are written in a compact
+bitvector expression language over registers (`x0..x31`, ABI names like `a0`,
+`sp`, `ra`), `pc`, and integer literals:
+
+```python
+from rotor import RotorAPI
+
+api = RotorAPI("path/to/program.elf", default_solver="bitwuzla",
+               default_bound=200)
+
+result = api.can_reach(function="check_input",
+                       condition="a0 < 0",
+                       bound=200)
+
+if result.verdict == "reachable":
+    print(result.trace.as_markdown())    # source-annotated counterexample
+elif result.verdict == "unreachable":
+    print("proved safe up to bound")
+```
+
+### 3. Synthesize an input
+
+```python
+result = api.find_input(function="parse",
+                        output_condition="a0 == 0xdeadbeef",
+                        bound=500)
+
+if result.verdict == "found":
+    print(f"input bytes: {result.input_bytes!r}")
+    print(result.trace.as_markdown())
+```
+
+### 4. Prove an invariant with IC3
+
+```python
+result = api.verify(function="counter",
+                    invariant="x10 <= 100",
+                    bound=1000,
+                    unbounded=True)
+
+if result.verdict == "holds" and result.unbounded:
+    print("inductive invariant:")
+    print(result.proof)
+elif result.verdict == "violated":
+    print(result.counterexample.as_markdown())
+```
+
+### 5. Check semantic equivalence of two binaries
+
+```python
+result = api.are_equivalent(other_binary="path/to/refactored.elf",
+                            function="sort",
+                            bound=500,
+                            unbounded=False)
+
+print(result.verdict)                    # 'equivalent' | 'differs' | 'unknown'
+```
+
+### 6. Drop into lower levels when needed
+
+```python
+from rotor import RotorEngine, ModelConfig
+
+engine = RotorEngine("path/to/program.elf")
+inst = engine.create_instance(
+    function="foo",
+    config=ModelConfig(solver="btormc", bound=100, cores=1),
+)
+inst.add_bad(inst.pc_equals(0x10240), "reached-error-handler")
+print(inst.check().verdict)
+```
+
+Further runnable scripts live in
+[`examples/`](examples): `buffer_overflow.py`, `input_synthesis.py`,
+`equivalence_check.py`, `ic3_proof.py`.
+
+---
+
 ## Motivation
 
 Compilers for C, C++, Rust, Go, Ada, Zig, and many other languages target
