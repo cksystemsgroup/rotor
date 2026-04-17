@@ -287,6 +287,8 @@ class RISCVMachineBuilder(BTOR2Builder):
         self._register_file: dict[int, Node] = {}
         # Per-core memory segment state nodes.
         self._memory_segments: dict[tuple[int, str], Node] = {}
+        # Per-core program counter state nodes.
+        self._pc_nodes: dict[int, Node] = {}
 
     # -------------------------------------------------------------- lifecycle
 
@@ -356,9 +358,31 @@ class RISCVMachineBuilder(BTOR2Builder):
                 self._state.state_nodes[symbol] = seg
 
     def _build_fetch_decode_execute(self) -> None:
-        # Full instruction semantics are deferred; the subprocess backend
-        # populates the DAG directly for the initial Phase 2 deliverable.
-        pass
+        """Create PC state nodes and wire up fetch/decode/execute.
+
+        Full instruction semantics live in :mod:`rotor.btor2.riscv`. This
+        method creates the per-core program-counter latches and delegates
+        transition construction to the ISA module.
+        """
+        from rotor.btor2.riscv import build_fetch_decode_execute
+
+        assert self.SID_MACHINE_WORD is not None
+        for core in range(self.config.cores):
+            symbol = f"core{core}-pc" if self.config.cores > 1 else "pc"
+            pc = self.state(self.SID_MACHINE_WORD, symbol, "program counter")
+            self._pc_nodes[core] = pc
+            self._state.state_nodes[symbol] = pc
+            init_pc = self.consth(
+                self.SID_MACHINE_WORD,
+                self.config.code_start,
+                f"initial pc = 0x{self.config.code_start:x}",
+            )
+            self._state.init_nodes.append(
+                self.init(self.SID_MACHINE_WORD, pc, init_pc, f"init {symbol}")
+            )
+
+        # Delegate per-core transition logic to the RISC-V ISA module.
+        build_fetch_decode_execute(self)
 
     def _build_kernel_model(self) -> None:
         # Syscalls (exit, brk, openat, read, write) are deferred.
