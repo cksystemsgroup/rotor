@@ -197,14 +197,26 @@ class RotorInstance:
         if self._last_result is None or self._last_result.witness is None:
             return []
         trace: list[MachineState] = []
+        registers: dict[int, int] = {}
+        memory: dict[int, int] = {}
         for frame in self._last_result.witness:
+            if frame.get("kind") != "state":
+                continue
             step = int(frame.get("step", len(trace)))
+            assignments = frame.get("assignments", {})
+            pc = 0
+            for key, value in assignments.items():
+                if key.endswith("pc") or key == "pc":
+                    pc = int(value)
+                elif "register-file[" in key:
+                    idx = int(key[key.index("[") + 1: key.index("]")])
+                    registers[idx] = int(value)
             trace.append(
                 MachineState(
                     step=step,
-                    pc=int(frame.get("pc", 0)),
-                    registers=frame.get("registers", {}),
-                    memory=frame.get("memory", {}),
+                    pc=pc,
+                    registers=dict(registers),
+                    memory=dict(memory),
                 )
             )
         return trace

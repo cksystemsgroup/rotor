@@ -107,6 +107,9 @@ class RotorAPI:
             default_solver=default_solver,
             default_bound=default_bound,
         )
+        if condition_compiler is None:
+            from rotor.expr import default_condition_compiler
+            condition_compiler = default_condition_compiler()
         self._compile_condition = condition_compiler
         self.binary: RISCVBinary = self.engine.binary
 

@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-import re
 import subprocess
 import tempfile
 import time
 
 from rotor.solvers.base import CheckResult, SolverBackend
-
-
-_BTORMC_SAT_RE = re.compile(r"\bsat\b", re.IGNORECASE)
-_BTORMC_UNSAT_RE = re.compile(r"\bunsat\b", re.IGNORECASE)
-_BTORMC_BAD_RE = re.compile(r"^b(\d+)\b", re.MULTILINE)
+from rotor.witness import parse_btor2_witness
 
 
 class BtorMCSolver(SolverBackend):
@@ -83,29 +78,30 @@ class BtorMCSolver(SolverBackend):
 
     @staticmethod
     def _parse(stdout: str) -> tuple[str, int | None, list[dict] | None]:
-        if _BTORMC_SAT_RE.search(stdout):
-            # Parse the witness into frames. BtorMC prints '@k' lines to
-            # delimit frame k; state/input assignments follow as
-            # '<nid> <value>' or '<nid> <value> <symbol>'.
+        witness = parse_btor2_witness(stdout)
+        if witness.verdict == "sat":
             frames: list[dict] = []
-            current: dict | None = None
-            for line in stdout.splitlines():
-                stripped = line.strip()
-                if stripped.startswith("@"):
-                    if current is not None:
-                        frames.append(current)
-                    try:
-                        k = int(stripped[1:])
-                    except ValueError:
-                        k = len(frames)
-                    current = {"step": k, "assignments": {}}
-                elif current is not None and stripped and stripped[0].isdigit():
-                    tokens = stripped.split()
-                    if len(tokens) >= 2:
-                        current["assignments"][tokens[0]] = tokens[1]
-            if current is not None:
-                frames.append(current)
-            return "sat", len(frames) - 1 if frames else 0, frames or None
-        if _BTORMC_UNSAT_RE.search(stdout):
+            for frame in witness.frames:
+                assignments = {}
+                for a in frame.assignments:
+                    key = a.symbol or str(a.nid)
+                    if a.index is not None:
+                        assignments[f"{key}[{a.index}]"] = a.value
+                    else:
+                        assignments[key] = a.value
+                frames.append(
+                    {
+                        "step": frame.step,
+                        "kind": frame.kind,
+                        "assignments": assignments,
+                    }
+                )
+            steps = (
+                max((f.step for f in witness.state_frames()), default=0)
+                if witness.state_frames()
+                else 0
+            )
+            return "sat", steps, frames or None
+        if witness.verdict == "unsat":
             return "unsat", None, None
         return "unknown", None, None
