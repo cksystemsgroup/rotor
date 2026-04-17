@@ -289,6 +289,8 @@ class RISCVMachineBuilder(BTOR2Builder):
         self._memory_segments: dict[tuple[int, str], Node] = {}
         # Per-core program counter state nodes.
         self._pc_nodes: dict[int, Node] = {}
+        # Per-core halted latches (set to 1 by ECALL).
+        self._halted_nodes: dict[int, Node] = {}
 
     # -------------------------------------------------------------- lifecycle
 
@@ -346,16 +348,29 @@ class RISCVMachineBuilder(BTOR2Builder):
             )
 
     def _build_memory_segments(self) -> None:
-        # Segments: 'code', 'data', 'heap', 'stack'. Modeled as byte-addressed
-        # arrays indexed by virtual address with byte elements.
+        # Architecturally the machine has a single flat virtual address space.
+        # We model ``code`` separately so code synthesis can mark it symbolic
+        # without affecting the data heap/stack; everything else lives in a
+        # unified byte-addressable ``memory`` state node.
         assert self.SID_VIRTUAL_ADDRESS is not None and self.SID_BYTE is not None
         mem_sort = self.array(self.SID_VIRTUAL_ADDRESS, self.SID_BYTE, "memory")
         for core in range(self.config.cores):
-            for name in ("code", "data", "heap", "stack"):
-                symbol = f"core{core}-{name}" if self.config.cores > 1 else name
-                seg = self.state(mem_sort, symbol, f"{name} segment")
-                self._memory_segments[(core, name)] = seg
-                self._state.state_nodes[symbol] = seg
+            code_symbol = f"core{core}-code" if self.config.cores > 1 else "code"
+            mem_symbol = f"core{core}-memory" if self.config.cores > 1 else "memory"
+
+            code = self.state(mem_sort, code_symbol, "code segment")
+            self._memory_segments[(core, "code")] = code
+            self._state.state_nodes[code_symbol] = code
+
+            memory = self.state(mem_sort, mem_symbol, "data/heap/stack")
+            self._memory_segments[(core, "memory")] = memory
+            self._state.state_nodes[mem_symbol] = memory
+
+            # Initialize unified memory to zero.
+            zero_mem = self.zero(mem_sort, "zeroed memory")
+            self._state.init_nodes.append(
+                self.init(mem_sort, memory, zero_mem, f"init {mem_symbol}")
+            )
 
     def initialize_code_segment(
         self, core: int, base_addr: int, data: bytes
@@ -366,45 +381,73 @@ class RISCVMachineBuilder(BTOR2Builder):
         Called from :class:`~rotor.instance.RotorInstance` once the machine
         has been built and the binary's ``.text`` bytes are available.
         """
+        self._initialize_segment(core, "code", base_addr, data, "code")
+
+    def initialize_data_segment(
+        self, core: int, base_addr: int, data: bytes
+    ) -> None:
+        """Bake ELF ``.data`` / ``.rodata`` bytes into the unified memory."""
+        self._initialize_segment(core, "memory", base_addr, data, "memory")
+
+    def _initialize_segment(
+        self, core: int, segment: str, base_addr: int, data: bytes, label: str,
+    ) -> None:
         assert self.SID_VIRTUAL_ADDRESS is not None and self.SID_BYTE is not None
         mem_sort = self.array(self.SID_VIRTUAL_ADDRESS, self.SID_BYTE, "memory")
-        code = self._memory_segments[(core, "code")]
+        node = self._memory_segments[(core, segment)]
 
-        acc = self.zero(mem_sort, "zero code segment")
+        # Start from the existing init value (zero array, or a prior
+        # initialization). We rebuild by layering writes on top of zero.
+        acc = self.zero(mem_sort, f"zero {label} segment")
         for offset, byte in enumerate(data):
             addr = self.constd(
                 self.SID_VIRTUAL_ADDRESS, base_addr + offset,
-                f"code[0x{base_addr + offset:x}]",
+                f"{label}[0x{base_addr + offset:x}]",
             )
             value = self.constd(self.SID_BYTE, byte, f"0x{byte:02x}")
-            acc = self.write(acc, addr, value, "code-byte")
+            acc = self.write(acc, addr, value, f"{label}-byte")
 
+        # Remove any prior init for this state, then install the new one.
+        self._state.init_nodes = [
+            n for n in self._state.init_nodes
+            if not (n.op == "init" and n.args and n.args[0] is node)
+        ]
         self._state.init_nodes.append(
-            self.init(mem_sort, code, acc, "init code segment")
+            self.init(mem_sort, node, acc, f"init {label} segment")
         )
 
     def _build_fetch_decode_execute(self) -> None:
         """Create PC state nodes and wire up fetch/decode/execute.
 
         Full instruction semantics live in :mod:`rotor.btor2.riscv`. This
-        method creates the per-core program-counter latches and delegates
-        transition construction to the ISA module.
+        method creates the per-core program-counter and halt latches, then
+        delegates transition construction to the ISA module.
         """
         from rotor.btor2.riscv import build_fetch_decode_execute
 
-        assert self.SID_MACHINE_WORD is not None
+        assert self.SID_MACHINE_WORD is not None and self.SID_BOOLEAN is not None
         for core in range(self.config.cores):
-            symbol = f"core{core}-pc" if self.config.cores > 1 else "pc"
-            pc = self.state(self.SID_MACHINE_WORD, symbol, "program counter")
+            pc_symbol = f"core{core}-pc" if self.config.cores > 1 else "pc"
+            pc = self.state(self.SID_MACHINE_WORD, pc_symbol, "program counter")
             self._pc_nodes[core] = pc
-            self._state.state_nodes[symbol] = pc
+            self._state.state_nodes[pc_symbol] = pc
             init_pc = self.consth(
                 self.SID_MACHINE_WORD,
                 self.config.code_start,
                 f"initial pc = 0x{self.config.code_start:x}",
             )
             self._state.init_nodes.append(
-                self.init(self.SID_MACHINE_WORD, pc, init_pc, f"init {symbol}")
+                self.init(self.SID_MACHINE_WORD, pc, init_pc, f"init {pc_symbol}")
+            )
+
+            halt_symbol = f"core{core}-halted" if self.config.cores > 1 else "halted"
+            halted = self.state(self.SID_BOOLEAN, halt_symbol, "halted")
+            self._halted_nodes[core] = halted
+            self._state.state_nodes[halt_symbol] = halted
+            assert self.NID_FALSE is not None
+            self._state.init_nodes.append(
+                self.init(self.SID_BOOLEAN, halted, self.NID_FALSE,
+                          f"init {halt_symbol}")
             )
 
         # Delegate per-core transition logic to the RISC-V ISA module.

@@ -12,8 +12,8 @@ def test_python_builder_produces_sorts_and_states() -> None:
     model = builder.build()
     assert model.dag is builder.dag
     assert "register-file" in model.state_nodes
-    # Memory segments
-    for seg in ("code", "data", "heap", "stack"):
+    # Unified memory + separate code segment for synthesis.
+    for seg in ("code", "memory"):
         assert seg in model.state_nodes
     # Sorts present in the DAG
     descriptions = {s.describe() for s in model.dag.sorts()}

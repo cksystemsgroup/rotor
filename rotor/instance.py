@@ -142,6 +142,18 @@ class RotorInstance:
                         builder.initialize_code_segment(
                             core, low, code_seg.data[offset:offset + length]
                         )
+            # Bake read-only data so loads of string literals / constant
+            # tables see the real values rather than zero.
+            if self.binary.rodata is not None and self.binary.rodata.size > 0:
+                for core in range(self.config.cores):
+                    builder.initialize_data_segment(
+                        core, self.binary.rodata.start, self.binary.rodata.data
+                    )
+            if self.binary.data is not None and self.binary.data.size > 0:
+                for core in range(self.config.cores):
+                    builder.initialize_data_segment(
+                        core, self.binary.data.start, self.binary.data.data
+                    )
         else:
             raise ValueError(
                 f"Unknown model_backend {self.config.model_backend!r}"
