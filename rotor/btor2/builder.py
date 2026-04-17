@@ -341,11 +341,12 @@ class RISCVMachineBuilder(BTOR2Builder):
             regs = self.state(self.SID_REGISTER_STATE, symbol, "register file state")
             self._register_file[core] = regs
             self._state.state_nodes[symbol] = regs
-            # Initialize to zero.
-            zero_array = self.zero(self.SID_REGISTER_STATE, "zeroed registers")
-            self._state.init_nodes.append(
-                self.init(self.SID_REGISTER_STATE, regs, zero_array, f"init {symbol}")
-            )
+            if getattr(self.config, "init_registers_to_zero", True):
+                zero_array = self.zero(self.SID_REGISTER_STATE, "zeroed registers")
+                self._state.init_nodes.append(
+                    self.init(self.SID_REGISTER_STATE, regs, zero_array,
+                              f"init {symbol}")
+                )
 
     def _build_memory_segments(self) -> None:
         # Architecturally the machine has a single flat virtual address space.

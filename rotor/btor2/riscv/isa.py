@@ -88,8 +88,13 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
     sem += _branches(b, instr, pc, regs, pc_plus_4)
     sem += _op_imm(b, instr, regs)
     sem += _op(b, instr, regs)
+    sem += _op_m(b, instr, regs)
     sem += _loads(b, instr, regs, memory)
     sem += _stores(b, instr, regs, memory)
+    if (b.SID_MACHINE_WORD.width or 0) == 64:
+        sem += _op_imm_32(b, instr, regs)
+        sem += _op_32(b, instr, regs)
+        sem += _op_m_32(b, instr, regs)
     sem += _ecall(b, instr)
 
     # ---- Select outputs via ITE cascade over enabled predicates.
@@ -444,6 +449,165 @@ def _stores(
     if mw == 64:
         entries.append(mk("sd", 3, 8))
     return entries
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# RV64M — multiply/divide/remainder on the full machine word
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _op_m(
+    b: "RISCVMachineBuilder", instr: "Node", regs: "Node",
+) -> list[_InstrSemantics]:
+    """RV64M / RV32M: MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU."""
+    assert b.SID_MACHINE_WORD is not None
+    op = D.is_opcode(b, instr, OP_OP, "op==op")
+    x1 = _read_reg(b, regs, D.rs1(b, instr), "opm-rs1")
+    x2 = _read_reg(b, regs, D.rs2(b, instr), "opm-rs2")
+    f7_m = D.is_funct7(b, instr, 0x01, "f7==01")
+
+    mw = b.SID_MACHINE_WORD.width or 0
+    dw_sort = b.bitvec(mw * 2)
+
+    def hi_half(product: "Node", name: str) -> "Node":
+        return b.slice(b.SID_MACHINE_WORD, product, mw * 2 - 1, mw, name)
+
+    # Signed/unsigned full-width products via extension.
+    s_x1 = b.sext(dw_sort, x1, mw, "sext-x1")
+    s_x2 = b.sext(dw_sort, x2, mw, "sext-x2")
+    u_x1 = b.uext(dw_sort, x1, mw, "uext-x1")
+    u_x2 = b.uext(dw_sort, x2, mw, "uext-x2")
+    prod_ss = b.mul(s_x1, s_x2, "prod-ss")
+    prod_su = b.mul(s_x1, u_x2, "prod-su")
+    prod_uu = b.mul(u_x1, u_x2, "prod-uu")
+
+    def mk(name: str, f3: int, value: "Node") -> _InstrSemantics:
+        enabled = b.and_(
+            b.and_(op, D.is_funct3(b, instr, f3, f"f3=={f3}"), f"{name}-f3"),
+            f7_m, f"{name}-enabled",
+        )
+        return _InstrSemantics(name=name, enabled=enabled, rd_value=value)
+
+    return [
+        mk("mul",    0, b.mul(x1, x2, "mul")),
+        mk("mulh",   1, hi_half(prod_ss, "mulh-hi")),
+        mk("mulhsu", 2, hi_half(prod_su, "mulhsu-hi")),
+        mk("mulhu",  3, hi_half(prod_uu, "mulhu-hi")),
+        mk("div",    4, b.sdiv(x1, x2, "div")),
+        mk("divu",   5, b.udiv(x1, x2, "divu")),
+        mk("rem",    6, b.srem(x1, x2, "rem")),
+        mk("remu",   7, b.urem(x1, x2, "remu")),
+    ]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# RV64I 32-bit variants (OP_IMM_32 / OP_32)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _op_imm_32(
+    b: "RISCVMachineBuilder", instr: "Node", regs: "Node",
+) -> list[_InstrSemantics]:
+    """ADDIW, SLLIW, SRLIW, SRAIW — 32-bit I-type sign-extended to 64."""
+    assert b.SID_MACHINE_WORD is not None and b.SID_SINGLE_WORD is not None
+    op = D.is_opcode(b, instr, OP_OP_IMM_32, "op==opimm32")
+    x1 = _read_reg(b, regs, D.rs1(b, instr), "opimm32-rs1")
+    imm = D.imm_i(b, instr)
+
+    x1_lo = b.slice(b.SID_SINGLE_WORD, x1, 31, 0, "x1[31:0]")
+    imm_lo = b.slice(b.SID_SINGLE_WORD, imm, 31, 0, "imm[31:0]")
+    shamt5 = b.slice(b.bitvec(5), imm, 4, 0, "shamt5")
+    shamt5_ext = b.uext(b.SID_SINGLE_WORD, shamt5, 27, "shamt5-ext")
+
+    f7_zero = D.is_funct7(b, instr, 0x00, "f7==00")
+    f7_sra  = D.is_funct7(b, instr, 0x20, "f7==20")
+
+    def sext64(v32: "Node", name: str) -> "Node":
+        return b.sext(b.SID_MACHINE_WORD, v32, 32, name)
+
+    def mk(name: str, f3: int, value32: "Node", f7_check: "Node | None" = None) -> _InstrSemantics:
+        enabled = b.and_(op, D.is_funct3(b, instr, f3, f"f3=={f3}"), f"{name}-f3")
+        if f7_check is not None:
+            enabled = b.and_(enabled, f7_check, f"{name}-enabled")
+        return _InstrSemantics(name=name, enabled=enabled,
+                               rd_value=sext64(value32, f"{name}-sext"))
+
+    return [
+        mk("addiw",  0, b.add(x1_lo, imm_lo, "addiw-32")),
+        mk("slliw",  1, b.sll(x1_lo, shamt5_ext, "slliw-32"), f7_zero),
+        mk("srliw",  5, b.srl(x1_lo, shamt5_ext, "srliw-32"), f7_zero),
+        mk("sraiw",  5, b.sra(x1_lo, shamt5_ext, "sraiw-32"), f7_sra),
+    ]
+
+
+def _op_32(
+    b: "RISCVMachineBuilder", instr: "Node", regs: "Node",
+) -> list[_InstrSemantics]:
+    """ADDW, SUBW, SLLW, SRLW, SRAW — 32-bit R-type sign-extended to 64."""
+    assert b.SID_MACHINE_WORD is not None and b.SID_SINGLE_WORD is not None
+    op = D.is_opcode(b, instr, OP_OP_32, "op==op32")
+    x1 = _read_reg(b, regs, D.rs1(b, instr), "op32-rs1")
+    x2 = _read_reg(b, regs, D.rs2(b, instr), "op32-rs2")
+
+    x1_lo = b.slice(b.SID_SINGLE_WORD, x1, 31, 0, "x1lo")
+    x2_lo = b.slice(b.SID_SINGLE_WORD, x2, 31, 0, "x2lo")
+    shamt5 = b.slice(b.bitvec(5), x2, 4, 0, "op32-shamt5")
+    shamt5_ext = b.uext(b.SID_SINGLE_WORD, shamt5, 27, "op32-shamt5-ext")
+
+    f7_zero = D.is_funct7(b, instr, 0x00, "f7==00")
+    f7_sub  = D.is_funct7(b, instr, 0x20, "f7==20")
+
+    def sext64(v32: "Node", name: str) -> "Node":
+        return b.sext(b.SID_MACHINE_WORD, v32, 32, name)
+
+    def mk(name: str, f3: int, f7_ok: "Node", value32: "Node") -> _InstrSemantics:
+        enabled = b.and_(
+            b.and_(op, D.is_funct3(b, instr, f3, f"f3=={f3}"), f"{name}-f3"),
+            f7_ok, f"{name}-enabled",
+        )
+        return _InstrSemantics(name=name, enabled=enabled,
+                               rd_value=sext64(value32, f"{name}-sext"))
+
+    return [
+        mk("addw", 0, f7_zero, b.add(x1_lo, x2_lo, "addw-32")),
+        mk("subw", 0, f7_sub,  b.sub(x1_lo, x2_lo, "subw-32")),
+        mk("sllw", 1, f7_zero, b.sll(x1_lo, shamt5_ext, "sllw-32")),
+        mk("srlw", 5, f7_zero, b.srl(x1_lo, shamt5_ext, "srlw-32")),
+        mk("sraw", 5, f7_sub,  b.sra(x1_lo, shamt5_ext, "sraw-32")),
+    ]
+
+
+def _op_m_32(
+    b: "RISCVMachineBuilder", instr: "Node", regs: "Node",
+) -> list[_InstrSemantics]:
+    """MULW, DIVW, DIVUW, REMW, REMUW — 32-bit M-extension operations."""
+    assert b.SID_MACHINE_WORD is not None and b.SID_SINGLE_WORD is not None
+    op = D.is_opcode(b, instr, OP_OP_32, "op==op32")
+    x1 = _read_reg(b, regs, D.rs1(b, instr), "opm32-rs1")
+    x2 = _read_reg(b, regs, D.rs2(b, instr), "opm32-rs2")
+    f7_m = D.is_funct7(b, instr, 0x01, "f7==01")
+
+    x1_lo = b.slice(b.SID_SINGLE_WORD, x1, 31, 0, "x1lo-m")
+    x2_lo = b.slice(b.SID_SINGLE_WORD, x2, 31, 0, "x2lo-m")
+
+    def sext64(v32: "Node", name: str) -> "Node":
+        return b.sext(b.SID_MACHINE_WORD, v32, 32, name)
+
+    def mk(name: str, f3: int, value32: "Node") -> _InstrSemantics:
+        enabled = b.and_(
+            b.and_(op, D.is_funct3(b, instr, f3, f"f3=={f3}"), f"{name}-f3"),
+            f7_m, f"{name}-enabled",
+        )
+        return _InstrSemantics(name=name, enabled=enabled,
+                               rd_value=sext64(value32, f"{name}-sext"))
+
+    return [
+        mk("mulw",  0, b.mul (x1_lo, x2_lo, "mulw-32")),
+        mk("divw",  4, b.sdiv(x1_lo, x2_lo, "divw-32")),
+        mk("divuw", 5, b.udiv(x1_lo, x2_lo, "divuw-32")),
+        mk("remw",  6, b.srem(x1_lo, x2_lo, "remw-32")),
+        mk("remuw", 7, b.urem(x1_lo, x2_lo, "remuw-32")),
+    ]
 
 
 # ──────────────────────────────────────────────────────────────────────────

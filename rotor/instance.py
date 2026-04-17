@@ -59,6 +59,12 @@ class ModelConfig:
     enable_rv64m: bool = True
     riscu_only: bool = False
 
+    # Initial state
+    # If True, the register file is init'd to all zeros (default). Set False
+    # for synthesis-style questions ("does any a0 cause X?"), which need
+    # argument registers to be symbolic at step 0.
+    init_registers_to_zero: bool = True
+
     # Solver
     solver: str = "bitwuzla"
     bound: int = 1000

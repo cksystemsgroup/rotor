@@ -451,23 +451,32 @@ class RISCVBinary:
     # -------------------------------------------------------- disassembly hook
 
     def disassemble(self, pc: int) -> str:
-        """Return a textual disassembly of the instruction at ``pc``.
+        """Return the canonical assembly text for the instruction at ``pc``.
 
-        This is a simple stub: the Python package defers full RISC-V
-        disassembly to an optional helper; when unavailable we render the
-        raw bytes.
+        Delegates to :func:`rotor.riscv.disasm.disassemble` for the full
+        RV64I + RV64M subset; unknown opcodes fall back to ``.word 0x...``.
+        16-bit compressed instructions are not currently decoded — they
+        render as ``.hword`` for now.
         """
+        from rotor.riscv.disasm import disassemble as _disasm
+
         if self.code is None:
             return f"<no code at 0x{pc:x}>"
         offset = pc - self.code.start
         if offset < 0 or offset >= self.code.size:
             return f"<pc 0x{pc:x} out of .text>"
-        # RV64 instructions are either 32 bits or 16 bits (RVC).
         raw = self.code.data[offset:offset + 4]
         if len(raw) < 2:
             return f"<pc 0x{pc:x} truncated>"
-        word = int.from_bytes(raw[:4] if len(raw) >= 4 else raw + b"\x00\x00", "little")
-        return f"0x{pc:08x}: {word:08x}"
+        if len(raw) < 4:
+            halfword = int.from_bytes(raw[:2], "little")
+            return f".hword 0x{halfword:04x}"
+        word = int.from_bytes(raw, "little")
+        # RVC: compressed instructions have low two bits != 11.
+        if (word & 0x3) != 0x3:
+            halfword = word & 0xFFFF
+            return f".hword 0x{halfword:04x}"
+        return _disasm(word, pc=pc, is_64bit=self.is_64bit)
 
 
 # ──────────────────────────────────────────────────────────────────────────

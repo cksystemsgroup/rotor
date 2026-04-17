@@ -302,42 +302,77 @@ class BitwuzlaUnroller:
 
     # ---------------------------------------------------------- witness
 
+    # Arrays with index widths at or below this threshold are fully sampled
+    # during witness extraction (one entry per index). Wider arrays — memory,
+    # typically 32-bit indexed — would produce billions of entries and are
+    # elided unless caller supplies an explicit index list (TODO).
+    _ARRAY_EXPAND_INDEX_WIDTH = 5
+
     def _extract_witness(self, last_step: int) -> list[dict[str, Any]]:
-        """Read state values from the model at each step."""
+        """Read state values from the model at each step.
+
+        Scalar bitvector states are queried directly. Small array states
+        (index width ≤ 5, which covers the 32-entry register file) are
+        expanded: we issue ``array_select`` queries for every index and emit
+        one assignment per ``symbol[index]``. Larger arrays (memory) are
+        reported as a single opaque entry.
+        """
+        import bitwuzla
+        Kind = bitwuzla.Kind
         frames: list[dict[str, Any]] = []
         for k in range(last_step + 1):
-            entry = {"step": k, "kind": "state", "assignments": []}
+            assignments: list[tuple[str, int | None, Any, Any]] = []
             for state in self._state_nodes:
                 term = self._state_at[state.nid].get(k)
                 if term is None:
                     continue
-                try:
-                    value = self.bw.get_value(term)
-                except Exception:
-                    continue
-                entry["assignments"].append(
-                    (state.symbol or str(state.nid), state.nid, state.sort, value)
-                )
-            frames.append(entry)
+                symbol = state.symbol or str(state.nid)
+
+                if (state.sort.kind == "array"
+                        and state.sort.index_sort is not None
+                        and (state.sort.index_sort.width or 0)
+                              <= self._ARRAY_EXPAND_INDEX_WIDTH):
+                    idx_sort = self._sort_of(state.sort.index_sort)
+                    n_entries = 1 << (state.sort.index_sort.width or 0)
+                    for i in range(n_entries):
+                        idx_term = self.tm.mk_bv_value(idx_sort, i)
+                        sel = self.tm.mk_term(Kind.ARRAY_SELECT, [term, idx_term])
+                        try:
+                            value = self.bw.get_value(sel)
+                        except Exception:
+                            continue
+                        assignments.append(
+                            (symbol, i, state.sort.elem_sort, value)
+                        )
+                else:
+                    try:
+                        value = self.bw.get_value(term)
+                    except Exception:
+                        continue
+                    assignments.append((symbol, None, state.sort, value))
+            frames.append({"step": k, "kind": "state", "assignments": assignments})
         return frames
 
-    def _witness_to_frames(self, raw_frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _witness_to_frames(
+        self, raw_frames: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Translate raw Bitwuzla-term values into the JSON shape the rest
         of the rotor stack consumes (matching BtorMC's witness frames)."""
         frames: list[dict[str, Any]] = []
         for entry in raw_frames:
             assignments: dict[str, int] = {}
-            for symbol, nid, sort, value_term in entry["assignments"]:
-                if sort.kind != "bitvec":
-                    # Arrays don't have a scalar value; skip.
+            for symbol, index, sort, value_term in entry["assignments"]:
+                if sort is None or sort.kind != "bitvec":
                     continue
                 try:
-                    assignments[symbol] = int(value_term.value(10))
+                    value = int(value_term.value(10))
                 except Exception:
                     try:
-                        assignments[symbol] = int(value_term.value(2), 2)
+                        value = int(value_term.value(2), 2)
                     except Exception:
                         continue
+                key = symbol if index is None else f"{symbol}[{index}]"
+                assignments[key] = value
             frames.append(
                 {"step": entry["step"], "kind": "state", "assignments": assignments}
             )
