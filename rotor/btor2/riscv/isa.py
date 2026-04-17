@@ -54,10 +54,16 @@ class _InstrSemantics:
     name: str
     enabled: "Node"
     rd_value: "Node | None" = None
-    next_pc: "Node | None" = None      # None ⇒ default PC+4
-    next_memory: "Node | None" = None  # None ⇒ memory unchanged
+    next_pc: "Node | None" = None           # None ⇒ default PC+4
+    next_memory: "Node | None" = None       # None ⇒ memory unchanged
     writes_rd: bool = True
     halt: bool = False
+    # Syscall-style effects. ``reg_write_target`` names an explicit register
+    # index (e.g. 10 for a0); combined with ``rd_value`` it writes the value
+    # there instead of to the instruction's rd field. ``exit_code_value``
+    # updates the exit-code latch when the exit syscall fires.
+    reg_write_target: int | None = None
+    exit_code_value: "Node | None" = None
 
 
 def build_fetch_decode_execute(b: "RISCVMachineBuilder") -> None:
@@ -76,6 +82,8 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
     code = b._memory_segments[(core, "code")]
     memory = b._memory_segments[(core, "memory")]
     halted = b._halted_nodes[core]
+    exit_code = b._exit_code_nodes[core]
+    input_byte = b._input_byte_nodes[core]
 
     # ---- Fetch: read 4 bytes from code memory at PC.
     instr = _fetch_instruction(b, code, pc)
@@ -95,7 +103,7 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
         sem += _op_imm_32(b, instr, regs)
         sem += _op_32(b, instr, regs)
         sem += _op_m_32(b, instr, regs)
-    sem += _ecall(b, instr)
+    sem += _ecall_dispatch(b, instr, regs, memory, input_byte)
 
     # ---- Select outputs via ITE cascade over enabled predicates.
     rd_idx = D.rd(b, instr)
@@ -106,17 +114,27 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
     writes_any: "Node" = b.NID_FALSE
     next_memory: "Node" = memory
     ecall_taken: "Node" = b.NID_FALSE
+    next_exit_code: "Node" = exit_code
+
+    # Syscall register writes: chain of (enabled, target_reg_idx, value)
+    # applied in sequence on top of the rd-gated update below.
+    syscall_writes: list[tuple["Node", int, "Node"]] = []
 
     for s in reversed(sem):
-        if s.rd_value is not None and s.writes_rd:
+        if s.rd_value is not None and s.writes_rd and s.reg_write_target is None:
             next_rd_value = b.ite(s.enabled, s.rd_value, next_rd_value, f"sel-rd:{s.name}")
             writes_any = b.ite(s.enabled, b.NID_TRUE, writes_any, f"sel-we:{s.name}")
+        if s.reg_write_target is not None and s.rd_value is not None:
+            syscall_writes.append((s.enabled, s.reg_write_target, s.rd_value))
         if s.next_pc is not None:
             next_pc = b.ite(s.enabled, s.next_pc, next_pc, f"sel-pc:{s.name}")
         if s.next_memory is not None:
             next_memory = b.ite(s.enabled, s.next_memory, next_memory, f"sel-mem:{s.name}")
         if s.halt:
             ecall_taken = b.ite(s.enabled, b.NID_TRUE, ecall_taken, f"sel-halt:{s.name}")
+        if s.exit_code_value is not None:
+            next_exit_code = b.ite(s.enabled, s.exit_code_value, next_exit_code,
+                                   f"sel-exit:{s.name}")
 
     # rd == x0 must never change: gate the register-file update.
     rd_is_zero = b.eq(rd_idx, b.zero(b.SID_REGISTER_ADDRESS, "x0"), "rd==x0")
@@ -125,11 +143,20 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
     new_rf = b.write(regs, rd_idx, next_rd_value, "new-rf")
     new_rf_selected = b.ite(effective_write, new_rf, regs, "rf-select")
 
+    # Layer syscall register writes on top. Each is gated by its own
+    # `enabled` so only one fires per step.
+    for enabled, target, value in syscall_writes:
+        idx = b.constd(b.SID_REGISTER_ADDRESS, target, f"x{target}")
+        with_sys = b.write(new_rf_selected, idx, value, f"syscall-rf:x{target}")
+        new_rf_selected = b.ite(enabled, with_sys, new_rf_selected,
+                                f"sel-syscall:x{target}")
+
     # When halted, everything stays put.
     not_halted = b.not_(halted, "!halted")
     gated_rf = b.ite(not_halted, new_rf_selected, regs, "rf-gated")
     gated_pc = b.ite(not_halted, next_pc, pc, "pc-gated")
     gated_mem = b.ite(not_halted, next_memory, memory, "mem-gated")
+    gated_exit_code = b.ite(not_halted, next_exit_code, exit_code, "exit-gated")
     next_halted = b.ite(not_halted, ecall_taken, halted, "halted-gated")
 
     b._state.next_nodes.append(
@@ -144,6 +171,9 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
     )
     b._state.next_nodes.append(
         b.next(b.SID_BOOLEAN, halted, next_halted, "halted-next")
+    )
+    b._state.next_nodes.append(
+        b.next(b.SID_MACHINE_WORD, exit_code, gated_exit_code, "exit-code-next")
     )
 
     # ---- Illegal-instruction property: at least one semantic must fire
@@ -611,32 +641,117 @@ def _op_m_32(
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# ECALL → halt
+# ECALL dispatch — minimal Linux RISC-V syscall model
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def _ecall(
-    b: "RISCVMachineBuilder", instr: "Node",
-) -> list[_InstrSemantics]:
-    """Recognize the ECALL instruction and latch the halted state.
+# Linux RISC-V syscall numbers (subset).
+SYSCALL_EXIT = 93
+SYSCALL_READ = 63
+SYSCALL_WRITE = 64
+SYSCALL_BRK = 214
 
-    Full syscall dispatch (exit/read/write/brk) is deferred; for verification
-    purposes we treat any ECALL as a program-terminating event, which is
-    enough to prevent ECALL from tripping the illegal-instruction bad state
-    and to stop the machine transitioning further.
+
+def _ecall_dispatch(
+    b: "RISCVMachineBuilder", instr: "Node", regs: "Node", memory: "Node",
+    input_byte: "Node",
+) -> list[_InstrSemantics]:
+    """Dispatch ECALL by syscall number in a7 (x17).
+
+    Supported syscalls:
+      * exit  (a7=93): halt the machine and latch ``a0`` into ``exit-code``.
+      * read  (a7=63): write the current step's fresh input byte into
+        memory at address ``a1``; set ``a0 = 1`` (bytes read).
+      * write (a7=64): no memory effect; set ``a0 = a2`` (bytes written).
+      * brk   (a7=214): no-op; leave ``a0`` unchanged.
+
+    ECALL with any other ``a7`` value halts the machine without updating
+    the exit code — same as the prior blanket behavior, so unknown
+    syscalls fail safe instead of tripping illegal-instruction.
     """
+    assert b.SID_MACHINE_WORD is not None and b.SID_BYTE is not None
+    assert b.SID_REGISTER_ADDRESS is not None and b.SID_VIRTUAL_ADDRESS is not None
+
     op = D.is_opcode(b, instr, OP_SYSTEM, "op==system")
     f3_zero = D.is_funct3(b, instr, 0, "f3==0")
     imm = D.imm_i(b, instr)
-    # ECALL is the SYSTEM instruction with imm[11:0] == 0.
     imm_zero = b.eq(imm, b.zero(b.SID_MACHINE_WORD, "0"), "imm==0")
-    enabled = b.and_(b.and_(op, f3_zero, "system-f3-0"), imm_zero, "ecall")
-    return [
-        _InstrSemantics(
-            name="ecall",
-            enabled=enabled,
-            rd_value=None,
-            writes_rd=False,
-            halt=True,
-        ),
-    ]
+    ecall = b.and_(b.and_(op, f3_zero, "system-f3-0"), imm_zero, "ecall")
+
+    def reg(k: int, name: str) -> "Node":
+        idx = b.constd(b.SID_REGISTER_ADDRESS, k, f"x{k}")
+        return b.read(regs, idx, name)
+
+    a0 = reg(10, "a0")
+    a1 = reg(11, "a1")
+    a2 = reg(12, "a2")
+    a7 = reg(17, "a7")
+
+    def a7_is(value: int, name: str) -> "Node":
+        k = b.constd(b.SID_MACHINE_WORD, value, f"a7={value}")
+        return b.eq(a7, k, name)
+
+    one = b.one(b.SID_MACHINE_WORD, "1")
+
+    # ── exit(93): halt + exit_code := a0
+    sem_exit = _InstrSemantics(
+        name="exit",
+        enabled=b.and_(ecall, a7_is(SYSCALL_EXIT, "a7==exit"), "ecall-exit"),
+        rd_value=None,
+        writes_rd=False,
+        halt=True,
+        exit_code_value=a0,
+    )
+
+    # ── read(63): memory[a1] := input_byte; a0 := 1
+    a1_vaddr = b.slice(
+        b.SID_VIRTUAL_ADDRESS, a1,
+        (b.SID_VIRTUAL_ADDRESS.width or 0) - 1, 0,
+        "read-a1-vaddr",
+    )
+    mem_after_read = b.write(memory, a1_vaddr, input_byte, "read-write-input")
+    sem_read = _InstrSemantics(
+        name="read",
+        enabled=b.and_(ecall, a7_is(SYSCALL_READ, "a7==read"), "ecall-read"),
+        rd_value=one,
+        reg_write_target=10,
+        writes_rd=True,
+        next_memory=mem_after_read,
+    )
+
+    # ── write(64): a0 := a2 (bytes written)
+    sem_write = _InstrSemantics(
+        name="write",
+        enabled=b.and_(ecall, a7_is(SYSCALL_WRITE, "a7==write"), "ecall-write"),
+        rd_value=a2,
+        reg_write_target=10,
+        writes_rd=True,
+    )
+
+    # ── brk(214): no-op (a0 unchanged)
+    sem_brk = _InstrSemantics(
+        name="brk",
+        enabled=b.and_(ecall, a7_is(SYSCALL_BRK, "a7==brk"), "ecall-brk"),
+        rd_value=a0,
+        reg_write_target=10,
+        writes_rd=True,
+    )
+
+    # ── unknown syscall: halt, but don't touch exit_code. Acts as a safe
+    # fall-through for any ECALL with an unrecognized ``a7``.
+    known_a7 = b.or_(
+        b.or_(a7_is(SYSCALL_EXIT, "a7==exit"), a7_is(SYSCALL_READ, "a7==read"),
+              "known-a"),
+        b.or_(a7_is(SYSCALL_WRITE, "a7==write"), a7_is(SYSCALL_BRK, "a7==brk"),
+              "known-b"),
+        "known-syscall",
+    )
+    sem_unknown = _InstrSemantics(
+        name="ecall-unknown",
+        enabled=b.and_(ecall, b.not_(known_a7, "unknown-a7"), "ecall-unknown"),
+        rd_value=None,
+        writes_rd=False,
+        halt=True,
+    )
+
+    return [sem_exit, sem_read, sem_write, sem_brk, sem_unknown]
