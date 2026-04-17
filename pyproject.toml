@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rotor"
+version = "0.1.0"
+description = "Python orchestration layer and reasoning engine on top of C Rotor"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "cksystemsgroup" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "pyelftools>=0.30",
+]
+
+[project.optional-dependencies]
+bitwuzla = ["bitwuzla>=0.7"]
+z3 = ["z3-solver>=4.12"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+sarif = ["sarif-om>=1.0"]
+
+[project.scripts]
+rotor = "rotor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rotor*"]
+exclude = ["tests*", "examples*", "tools*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
