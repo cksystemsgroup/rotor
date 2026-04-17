@@ -357,6 +357,32 @@ class RISCVMachineBuilder(BTOR2Builder):
                 self._memory_segments[(core, name)] = seg
                 self._state.state_nodes[symbol] = seg
 
+    def initialize_code_segment(
+        self, core: int, base_addr: int, data: bytes
+    ) -> None:
+        """Bake the bytes of ``data`` at ``base_addr`` into the code segment
+        via a chain of BTOR2 ``write`` ops on a zero-initialized array.
+
+        Called from :class:`~rotor.instance.RotorInstance` once the machine
+        has been built and the binary's ``.text`` bytes are available.
+        """
+        assert self.SID_VIRTUAL_ADDRESS is not None and self.SID_BYTE is not None
+        mem_sort = self.array(self.SID_VIRTUAL_ADDRESS, self.SID_BYTE, "memory")
+        code = self._memory_segments[(core, "code")]
+
+        acc = self.zero(mem_sort, "zero code segment")
+        for offset, byte in enumerate(data):
+            addr = self.constd(
+                self.SID_VIRTUAL_ADDRESS, base_addr + offset,
+                f"code[0x{base_addr + offset:x}]",
+            )
+            value = self.constd(self.SID_BYTE, byte, f"0x{byte:02x}")
+            acc = self.write(acc, addr, value, "code-byte")
+
+        self._state.init_nodes.append(
+            self.init(mem_sort, code, acc, "init code segment")
+        )
+
     def _build_fetch_decode_execute(self) -> None:
         """Create PC state nodes and wire up fetch/decode/execute.
 

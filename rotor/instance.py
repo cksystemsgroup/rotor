@@ -128,6 +128,20 @@ class RotorInstance:
         elif self.config.model_backend == "python":
             builder = RISCVMachineBuilder(self.config)
             model = builder.build()
+            # Bake the ELF's .text bytes into the code segment so the
+            # fetch stage reads real instructions rather than symbolic ones.
+            if self.binary.code is not None:
+                code_seg = self.binary.code
+                low = max(code_seg.start, self.config.code_start or code_seg.start)
+                high = self.config.code_end or (code_seg.start + code_seg.size)
+                high = min(high, code_seg.start + code_seg.size)
+                if high > low:
+                    offset = low - code_seg.start
+                    length = high - low
+                    for core in range(self.config.cores):
+                        builder.initialize_code_segment(
+                            core, low, code_seg.data[offset:offset + length]
+                        )
         else:
             raise ValueError(
                 f"Unknown model_backend {self.config.model_backend!r}"
