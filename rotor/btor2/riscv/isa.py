@@ -201,15 +201,18 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
     )
 
     # ---- Illegal-instruction property: at least one semantic must fire
-    # when the core is not halted.
-    any_enabled = sem[0].enabled
-    for s in sem[1:]:
-        any_enabled = b.or_(any_enabled, s.enabled, "any-enabled")
-    illegal = b.and_(b.not_(any_enabled, "no-semantic"), not_halted,
-                     "illegal-instruction")
-    b._state.property_nodes.append(
-        b.bad(illegal, f"core{core}-illegal-instruction", "illegal instruction")
-    )
+    # when the core is not halted. Suppressed when the caller asks for
+    # only user-supplied invariants (typically for k-induction proofs).
+    if getattr(b.config, "emit_default_bad_properties", True):
+        any_enabled = sem[0].enabled
+        for s in sem[1:]:
+            any_enabled = b.or_(any_enabled, s.enabled, "any-enabled")
+        illegal = b.and_(b.not_(any_enabled, "no-semantic"), not_halted,
+                         "illegal-instruction")
+        b._state.property_nodes.append(
+            b.bad(illegal, f"core{core}-illegal-instruction",
+                  "illegal instruction")
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────

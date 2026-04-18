@@ -65,6 +65,13 @@ class ModelConfig:
     # argument registers to be symbolic at step 0.
     init_registers_to_zero: bool = True
 
+    # If True (default), the native builder installs the default
+    # ``illegal-instruction`` bad property. Set False for unbounded proofs
+    # where the user provides their own invariant — the illegal-instruction
+    # property is not k-inductive on its own because symbolic code memory
+    # trivially allows any opcode to fire.
+    emit_default_bad_properties: bool = True
+
     # Kernel model
     # Maximum number of bytes a single ``read`` syscall can deliver in one
     # BMC step. Each position in the buffer is backed by a distinct symbolic

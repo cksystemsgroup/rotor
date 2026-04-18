@@ -34,7 +34,7 @@ from rotor.witness import Witness, WitnessAssignment, WitnessFrame
 class BitwuzlaUnroller:
     """BMC unroller over a :class:`NodeDAG` using Bitwuzla as the SMT backend."""
 
-    def __init__(self, dag: NodeDAG) -> None:
+    def __init__(self, dag: NodeDAG, *, skip_init: bool = False) -> None:
         try:
             import bitwuzla  # noqa: F401
         except ImportError as err:
@@ -42,6 +42,7 @@ class BitwuzlaUnroller:
                 "bitwuzla Python package required for BitwuzlaUnroller"
             ) from err
         self.dag = dag
+        self._skip_init = skip_init
         self._setup_bitwuzla()
         self._collect_structural_nodes()
 
@@ -165,10 +166,12 @@ class BitwuzlaUnroller:
             init_map = {n.args[0].nid: n for n in self._init_nodes}
             for state in self._state_nodes:
                 init = init_map.get(state.nid)
-                if init is not None:
+                if init is not None and not self._skip_init:
                     term = self._term_of(init.args[1], 0)
                 else:
-                    # Uninitialized state → fresh symbolic constant.
+                    # Uninitialized state (or skip_init mode) → fresh
+                    # symbolic constant at step 0, modelling "some arbitrary
+                    # reachable state" for induction queries.
                     term = self.tm.mk_const(
                         self._sort_of(state.sort),
                         f"{state.symbol or f'state{state.nid}'}_0",
@@ -273,6 +276,24 @@ class BitwuzlaUnroller:
         raise NotImplementedError(f"BMC unroller: unsupported op {op!r}")
 
     # ----------------------------------------------------------- helpers
+
+    def bad_at(self, bad_node: Node, k: int) -> Any:
+        """Public: evaluate a ``bad`` node's condition at step ``k`` as a Bool."""
+        if bad_node.op == "bad":
+            return self._bool_of(bad_node.args[0], k)
+        return self._bool_of(bad_node, k)
+
+    def materialize_through(self, k: int) -> None:
+        """Public: ensure states are materialized for steps 0..k."""
+        self._materialize_states(0)
+        for step in range(1, k + 1):
+            self._materialize_states(step)
+
+    def bad_nodes(self) -> list[Node]:
+        return list(self._bad_nodes)
+
+    def constraint_nodes(self) -> list[Node]:
+        return list(self._constraint_nodes)
 
     def _bool_of(self, node: Node, k: int) -> Any:
         """Evaluate ``node`` (which is bitvec 1) at step k, return a Bool."""

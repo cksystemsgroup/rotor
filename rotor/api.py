@@ -236,8 +236,20 @@ class RotorAPI:
         bound: int = 1000,
         unbounded: bool = False,
     ) -> VerifyResult:
-        solver = "ic3" if unbounded else self.engine.default_solver
-        inst = self._make_instance(function, solver=solver, bound=bound)
+        # 'kind' is the in-process k-induction solver; it returns an unbounded
+        # proof when the invariant is k-inductive for some k ≤ bound. For
+        # non-inductive invariants, users can switch to 'ic3' (external rIC3/
+        # AVR/ABC) to get CEGAR-style strengthening.
+        solver = "kind" if unbounded else self.engine.default_solver
+        # For unbounded proofs we suppress the native illegal-instruction
+        # bad: it is not k-inductive on its own (symbolic code permits any
+        # opcode), so leaving it in would poison the inductive step.
+        config = ModelConfig(
+            solver=solver,
+            bound=bound or self.engine.default_bound,
+            emit_default_bad_properties=not unbounded,
+        )
+        inst = self.engine.create_instance(function, config=config)
         # An invariant I is safe iff !I is unreachable: assert bad(!I).
         invariant_node = self._compile(inst, invariant)
         builder = inst.model.builder  # type: ignore[attr-defined]
