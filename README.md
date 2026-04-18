@@ -21,6 +21,56 @@ Install from the repository root:
 pip install -e .[bitwuzla]      # optional extras: bitwuzla, z3, sarif, dev
 ```
 
+### Five-minute CLI walkthrough
+
+Everything below uses `tests/fixtures/add2.elf` — a two-argument sum
+function. Swap in your own `.elf` (compiled with `-g`) to try it on real
+code.
+
+```console
+$ rotor info tests/fixtures/add2.elf --functions
+path      : tests/fixtures/add2.elf
+is_64bit  : True
+entry     : 0x1118c
+code      : 0x11158..0x11190 (56 bytes)
+functions:
+  0x00011158 +52   add2
+  0x0001118c +36   _start
+
+$ rotor disasm tests/fixtures/add2.elf --function add2
+  0x00011158: addi sp, sp, -32       ; add2.c:4:0
+  0x0001115c: sd ra, 24(sp)          ; add2.c:4:0
+  ...
+  0x00011178: addw a0, a0, a1        ; add2.c:5:14
+  0x00011188: ret                    ; add2.c:5:5
+
+$ rotor analyze tests/fixtures/add2.elf --function add2
+range    : 0x11158..0x1118c (13 instrs)
+status   : clean
+
+$ rotor reach tests/fixtures/add2.elf --function add2 \
+      --condition "pc == 0x11178" --bound 10
+verdict  : reachable
+elapsed  : 0.31s
+| step | location    | function | pc       | instruction      | ...
+
+$ rotor verify tests/fixtures/add2.elf --function add2 \
+      --invariant "0 == 0" --unbounded --bound 4
+verdict  : holds
+unbounded: True
+elapsed  : 0.13s
+inductive invariant:
+  1-inductive invariant: for all reachable states, none of the bad
+  properties holds: 'invariant-violated:'
+```
+
+The CLI subcommands map directly to the Python API: `reach` →
+`RotorAPI.can_reach`, `find-input` → `RotorAPI.find_input`, `verify` →
+`RotorAPI.verify`, `equivalent` → `RotorAPI.are_equivalent`. Exit codes
+follow a predictable convention: `0` for "safe / proved / equivalent",
+`1` for "something found (bug / reachable / diverges)", `2` for
+"unknown or error".
+
 ### 1. Load a binary and inspect it
 
 ```python
