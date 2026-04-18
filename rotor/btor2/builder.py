@@ -291,6 +291,10 @@ class RISCVMachineBuilder(BTOR2Builder):
         self._pc_nodes: dict[int, Node] = {}
         # Per-core halted latches (set to 1 by ECALL).
         self._halted_nodes: dict[int, Node] = {}
+        # Per-core exit-code latches (set by the exit syscall).
+        self._exit_code_nodes: dict[int, Node] = {}
+        # Per-core fresh-input byte nodes (read syscall input source).
+        self._input_byte_nodes: dict[int, Node] = {}
 
     # -------------------------------------------------------------- lifecycle
 
@@ -450,6 +454,22 @@ class RISCVMachineBuilder(BTOR2Builder):
                 self.init(self.SID_BOOLEAN, halted, self.NID_FALSE,
                           f"init {halt_symbol}")
             )
+
+            exit_symbol = f"core{core}-exit-code" if self.config.cores > 1 else "exit-code"
+            exit_code = self.state(self.SID_MACHINE_WORD, exit_symbol, "exit code")
+            self._exit_code_nodes[core] = exit_code
+            self._state.state_nodes[exit_symbol] = exit_code
+            self._state.init_nodes.append(
+                self.init(self.SID_MACHINE_WORD, exit_code,
+                          self.zero(self.SID_MACHINE_WORD, "0"),
+                          f"init {exit_symbol}")
+            )
+
+            assert self.SID_BYTE is not None
+            input_symbol = f"core{core}-input-byte" if self.config.cores > 1 else "input-byte"
+            input_byte = self.input(self.SID_BYTE, input_symbol, "read syscall byte")
+            self._input_byte_nodes[core] = input_byte
+            self._state.input_nodes[input_symbol] = input_byte
 
         # Delegate per-core transition logic to the RISC-V ISA module.
         build_fetch_decode_execute(self)
