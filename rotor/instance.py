@@ -65,6 +65,19 @@ class ModelConfig:
     # argument registers to be symbolic at step 0.
     init_registers_to_zero: bool = True
 
+    # Kernel model
+    # Maximum number of bytes a single ``read`` syscall can deliver in one
+    # BMC step. Each position in the buffer is backed by a distinct symbolic
+    # input node, so a single read can produce ``read_buffer_size``
+    # independent input bytes. Larger values increase model size linearly;
+    # 64 is enough for most C programs that do read(stdin, buf, ≤ 64).
+    read_buffer_size: int = 64
+
+    # Initial value of the program-break state, returned by ``brk(0)``.
+    # Typical runtimes place this just past .bss; the default here is well
+    # above the typical .text/.data for our fixtures.
+    program_break_init: int = 0x20000000
+
     # Solver
     solver: str = "bitwuzla"
     bound: int = 1000
