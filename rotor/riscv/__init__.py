@@ -8,5 +8,19 @@ tightly coupled to the BTOR2 node layer.
 from __future__ import annotations
 
 from rotor.riscv.disasm import disassemble, reg_name, ABI_REGISTERS
+from rotor.riscv.support import (
+    SUPPORTED_OPCODES,
+    UnsupportedInstruction,
+    scan_unsupported_instructions,
+    format_issues,
+)
 
-__all__ = ["disassemble", "reg_name", "ABI_REGISTERS"]
+__all__ = [
+    "disassemble",
+    "reg_name",
+    "ABI_REGISTERS",
+    "SUPPORTED_OPCODES",
+    "UnsupportedInstruction",
+    "scan_unsupported_instructions",
+    "format_issues",
+]
