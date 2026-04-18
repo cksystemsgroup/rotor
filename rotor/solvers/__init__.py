@@ -10,6 +10,7 @@ from rotor.solvers.base import CheckResult, SolverBackend
 from rotor.solvers.bitwuzla import BitwuzlaSolver
 from rotor.solvers.btormc import BtorMCSolver
 from rotor.solvers.ic3 import IC3Solver
+from rotor.solvers.kind import KInductionSolver
 from rotor.solvers.portfolio import PortfolioSolver
 
 
@@ -17,6 +18,7 @@ _BACKENDS = {
     "bitwuzla": BitwuzlaSolver,
     "btormc": BtorMCSolver,
     "ic3": IC3Solver,
+    "kind": KInductionSolver,
     "portfolio": PortfolioSolver,
 }
 
@@ -38,6 +40,7 @@ __all__ = [
     "BitwuzlaSolver",
     "BtorMCSolver",
     "IC3Solver",
+    "KInductionSolver",
     "PortfolioSolver",
     "make_solver",
 ]
