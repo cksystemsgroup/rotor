@@ -33,10 +33,52 @@ def test_exit_code_state_exists() -> None:
     assert model.state_nodes["exit-code"].sort.width == 64
 
 
-def test_input_byte_input_node_exists() -> None:
+def test_input_byte_nodes_span_full_buffer() -> None:
+    """Multi-byte read requires one fresh input node per buffer position."""
     _, model = _build_blank()
-    assert "input-byte" in model.input_nodes
-    assert model.input_nodes["input-byte"].sort.width == 8
+    # Default read_buffer_size is 64.
+    for k in range(64):
+        key = f"input-byte-{k}"
+        assert key in model.input_nodes, f"missing {key}"
+        assert model.input_nodes[key].sort.width == 8
+
+
+def test_read_buffer_size_configurable() -> None:
+    from rotor.btor2 import RISCVMachineBuilder
+    from rotor.instance import ModelConfig
+
+    cfg = ModelConfig(is_64bit=True, cores=1, read_buffer_size=8)
+    b = RISCVMachineBuilder(cfg)
+    model = b.build()
+    assert "input-byte-7" in model.input_nodes
+    assert "input-byte-8" not in model.input_nodes
+
+
+def test_program_break_state_exists() -> None:
+    _, model = _build_blank()
+    assert "program-break" in model.state_nodes
+    assert model.state_nodes["program-break"].sort.width == 64
+
+
+def test_read_count_state_exists() -> None:
+    _, model = _build_blank()
+    assert "read-count" in model.state_nodes
+
+
+def test_program_break_init_value() -> None:
+    """Builder should initialize program-break to ModelConfig.program_break_init."""
+    from rotor.btor2 import RISCVMachineBuilder
+    from rotor.instance import ModelConfig
+
+    cfg = ModelConfig(is_64bit=True, cores=1, program_break_init=0x30000000)
+    b = RISCVMachineBuilder(cfg)
+    model = b.build()
+    brk = model.state_nodes["program-break"]
+    inits = [n for n in model.init_nodes if n.args and n.args[0] is brk]
+    assert inits
+    init_value_node = inits[0].args[1]
+    assert init_value_node.op == "consth"
+    assert init_value_node.params[0] == 0x30000000
 
 
 def test_exit_code_has_init_and_next() -> None:
@@ -162,6 +204,117 @@ def test_ecall_read_writes_input_byte_to_memory() -> None:
     hit_step = result.steps
     frame = next(f for f in result.witness if f["step"] == hit_step)
     assert frame["assignments"]["register-file[10]"] == 1
+
+
+def test_ecall_read_multibyte_writes_n_input_bytes() -> None:
+    """A single read with a2=3 should leave three distinct symbolic bytes
+    at memory[a1], memory[a1+1], memory[a1+2] — and the rest of the buffer
+    unchanged."""
+    # a1 = 0x40000 (upper-half lui + addi 0), a2 = 3, a7 = 63.
+    b = _build_with_code([
+        addi(17, 0, 63),     # a7 = 63
+        addi(10, 0, 0),      # a0 = 0
+        lui(11, 0x40),       # a1 = 0x40000
+        addi(12, 0, 3),      # a2 = 3
+        ECALL,
+    ])
+    from rotor.btor2 import BTOR2Builder
+    b2 = BTOR2Builder(b.dag)
+    regs = b._register_file[0]
+    assert b.SID_REGISTER_ADDRESS is not None and b.SID_MACHINE_WORD is not None
+    a0_idx = b2.constd(b.SID_REGISTER_ADDRESS, 10, "x10")
+    a0_val = b2.read(regs, a0_idx, "a0")
+    three = b2.constd(b.SID_MACHINE_WORD, 3, "3")
+    b2.bad(b2.eq(a0_val, three), "a0==3")
+
+    u = BitwuzlaUnroller(b.dag)
+    result = u.check(bound=6)
+    assert result.verdict == "sat"
+    # At the hit step, a0 (bytes read) equals 3 and read-count equals 1.
+    frame = next(f for f in result.witness if f["step"] == result.steps)
+    assert frame["assignments"]["register-file[10]"] == 3
+    assert frame["assignments"]["read-count"] == 1
+
+
+def test_ecall_read_count_saturates_at_buffer_size() -> None:
+    """If a2 > buffer_size, a0 should return buffer_size, not a2."""
+    from rotor.btor2 import RISCVMachineBuilder
+    from rotor.instance import ModelConfig
+
+    cfg = ModelConfig(is_64bit=True, cores=1, code_start=0x1000,
+                      read_buffer_size=4)
+    b = RISCVMachineBuilder(cfg)
+    b.build()
+    program = [
+        addi(17, 0, 63),    # a7 = 63
+        addi(10, 0, 0),     # a0 = 0
+        lui(11, 0x40),      # a1 = 0x40000
+        addi(12, 0, 10),    # a2 = 10  (larger than buffer_size=4)
+        ECALL,
+    ]
+    data = b"".join(w.to_bytes(4, "little") for w in program)
+    b.initialize_code_segment(0, 0x1000, data)
+
+    from rotor.btor2 import BTOR2Builder
+    b2 = BTOR2Builder(b.dag)
+    regs = b._register_file[0]
+    assert b.SID_REGISTER_ADDRESS is not None and b.SID_MACHINE_WORD is not None
+    a0_idx = b2.constd(b.SID_REGISTER_ADDRESS, 10, "x10")
+    a0_val = b2.read(regs, a0_idx, "a0")
+    four = b2.constd(b.SID_MACHINE_WORD, 4, "4")
+    b2.bad(b2.eq(a0_val, four), "a0==4")
+
+    u = BitwuzlaUnroller(b.dag)
+    result = u.check(bound=6)
+    assert result.verdict == "sat"
+
+
+def test_ecall_brk_updates_program_break() -> None:
+    """brk(addr) should latch program-break to addr and return it in a0."""
+    # a7 = 214, a0 = 0x10000000 (new break, via lui 0x10000 << 12).
+    b = _build_with_code([
+        addi(17, 0, 214),       # a7 = 214 (brk)
+        lui(10, 0x10000),       # a0 = 0x10000000
+        ECALL,
+    ])
+    from rotor.btor2 import BTOR2Builder
+    b2 = BTOR2Builder(b.dag)
+    assert b.SID_MACHINE_WORD is not None
+    brk = b.dag.by_nid(b._program_break_nodes[0].nid)
+    assert brk is not None
+    target = b2.consth(b.SID_MACHINE_WORD, 0x10000000, "0x10000000")
+    b2.bad(b2.eq(brk, target), "brk-latched")
+
+    u = BitwuzlaUnroller(b.dag)
+    result = u.check(bound=4)
+    assert result.verdict == "sat"
+    # program-break should latch to 0x10000000 after ecall fires.
+    frame = next(f for f in result.witness if f["step"] == result.steps)
+    assert frame["assignments"]["program-break"] == 0x10000000
+
+
+def test_ecall_brk_zero_returns_current_break() -> None:
+    """brk(0) should leave program-break unchanged and return its value."""
+    # a7 = 214, a0 = 0. The default program-break init is 0x20000000.
+    b = _build_with_code([
+        addi(17, 0, 214),   # a7 = 214 (brk)
+        addi(10, 0, 0),     # a0 = 0
+        ECALL,
+    ])
+    from rotor.btor2 import BTOR2Builder
+    b2 = BTOR2Builder(b.dag)
+    regs = b._register_file[0]
+    assert b.SID_REGISTER_ADDRESS is not None and b.SID_MACHINE_WORD is not None
+    a0_idx = b2.constd(b.SID_REGISTER_ADDRESS, 10, "x10")
+    a0_val = b2.read(regs, a0_idx, "a0")
+    expected = b2.consth(b.SID_MACHINE_WORD, 0x20000000, "default_brk")
+    b2.bad(b2.eq(a0_val, expected), "a0-returns-brk")
+
+    u = BitwuzlaUnroller(b.dag)
+    result = u.check(bound=4)
+    assert result.verdict == "sat"
+    frame = next(f for f in result.witness if f["step"] == result.steps)
+    assert frame["assignments"]["program-break"] == 0x20000000
 
 
 def test_unknown_ecall_halts_without_setting_exit_code() -> None:

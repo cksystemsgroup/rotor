@@ -64,6 +64,10 @@ class _InstrSemantics:
     # updates the exit-code latch when the exit syscall fires.
     reg_write_target: int | None = None
     exit_code_value: "Node | None" = None
+    # ``next_program_break`` overrides the program-break state; used by brk.
+    # ``next_read_count`` overrides the read-count state; used by read.
+    next_program_break: "Node | None" = None
+    next_read_count: "Node | None" = None
 
 
 def build_fetch_decode_execute(b: "RISCVMachineBuilder") -> None:
@@ -83,7 +87,9 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
     memory = b._memory_segments[(core, "memory")]
     halted = b._halted_nodes[core]
     exit_code = b._exit_code_nodes[core]
-    input_byte = b._input_byte_nodes[core]
+    input_bytes = b._input_byte_nodes[core]
+    program_break = b._program_break_nodes[core]
+    read_count = b._read_count_nodes[core]
 
     # ---- Fetch: read 4 bytes from code memory at PC.
     instr = _fetch_instruction(b, code, pc)
@@ -103,7 +109,9 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
         sem += _op_imm_32(b, instr, regs)
         sem += _op_32(b, instr, regs)
         sem += _op_m_32(b, instr, regs)
-    sem += _ecall_dispatch(b, instr, regs, memory, input_byte)
+    sem += _ecall_dispatch(
+        b, instr, regs, memory, input_bytes, program_break, read_count,
+    )
 
     # ---- Select outputs via ITE cascade over enabled predicates.
     rd_idx = D.rd(b, instr)
@@ -115,6 +123,8 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
     next_memory: "Node" = memory
     ecall_taken: "Node" = b.NID_FALSE
     next_exit_code: "Node" = exit_code
+    next_program_break: "Node" = program_break
+    next_read_count: "Node" = read_count
 
     # Syscall register writes: chain of (enabled, target_reg_idx, value)
     # applied in sequence on top of the rd-gated update below.
@@ -135,6 +145,12 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
         if s.exit_code_value is not None:
             next_exit_code = b.ite(s.enabled, s.exit_code_value, next_exit_code,
                                    f"sel-exit:{s.name}")
+        if s.next_program_break is not None:
+            next_program_break = b.ite(s.enabled, s.next_program_break,
+                                       next_program_break, f"sel-brk:{s.name}")
+        if s.next_read_count is not None:
+            next_read_count = b.ite(s.enabled, s.next_read_count,
+                                    next_read_count, f"sel-rc:{s.name}")
 
     # rd == x0 must never change: gate the register-file update.
     rd_is_zero = b.eq(rd_idx, b.zero(b.SID_REGISTER_ADDRESS, "x0"), "rd==x0")
@@ -157,6 +173,8 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
     gated_pc = b.ite(not_halted, next_pc, pc, "pc-gated")
     gated_mem = b.ite(not_halted, next_memory, memory, "mem-gated")
     gated_exit_code = b.ite(not_halted, next_exit_code, exit_code, "exit-gated")
+    gated_brk = b.ite(not_halted, next_program_break, program_break, "brk-gated")
+    gated_rc = b.ite(not_halted, next_read_count, read_count, "rc-gated")
     next_halted = b.ite(not_halted, ecall_taken, halted, "halted-gated")
 
     b._state.next_nodes.append(
@@ -174,6 +192,12 @@ def _build_core(b: "RISCVMachineBuilder", core: int) -> None:
     )
     b._state.next_nodes.append(
         b.next(b.SID_MACHINE_WORD, exit_code, gated_exit_code, "exit-code-next")
+    )
+    b._state.next_nodes.append(
+        b.next(b.SID_MACHINE_WORD, program_break, gated_brk, "program-break-next")
+    )
+    b._state.next_nodes.append(
+        b.next(b.SID_MACHINE_WORD, read_count, gated_rc, "read-count-next")
     )
 
     # ---- Illegal-instruction property: at least one semantic must fire
@@ -654,20 +678,23 @@ SYSCALL_BRK = 214
 
 def _ecall_dispatch(
     b: "RISCVMachineBuilder", instr: "Node", regs: "Node", memory: "Node",
-    input_byte: "Node",
+    input_bytes: list["Node"], program_break: "Node", read_count: "Node",
 ) -> list[_InstrSemantics]:
     """Dispatch ECALL by syscall number in a7 (x17).
 
     Supported syscalls:
       * exit  (a7=93): halt the machine and latch ``a0`` into ``exit-code``.
-      * read  (a7=63): write the current step's fresh input byte into
-        memory at address ``a1``; set ``a0 = 1`` (bytes read).
+      * read  (a7=63): copy up to ``min(a2, N)`` fresh input bytes into
+        memory at addresses ``a1+k``; set ``a0`` to the number of bytes
+        delivered and increment ``read-count``. ``N`` is the builder's
+        configured ``read_buffer_size``.
       * write (a7=64): no memory effect; set ``a0 = a2`` (bytes written).
-      * brk   (a7=214): no-op; leave ``a0`` unchanged.
+      * brk   (a7=214): if ``a0 != 0``, set program-break to ``a0``; always
+        return the current program break in ``a0``.
 
     ECALL with any other ``a7`` value halts the machine without updating
-    the exit code — same as the prior blanket behavior, so unknown
-    syscalls fail safe instead of tripping illegal-instruction.
+    the exit code — a safe fall-through so unknown syscalls don't trip
+    illegal-instruction.
     """
     assert b.SID_MACHINE_WORD is not None and b.SID_BYTE is not None
     assert b.SID_REGISTER_ADDRESS is not None and b.SID_VIRTUAL_ADDRESS is not None
@@ -691,7 +718,10 @@ def _ecall_dispatch(
         k = b.constd(b.SID_MACHINE_WORD, value, f"a7={value}")
         return b.eq(a7, k, name)
 
-    one = b.one(b.SID_MACHINE_WORD, "1")
+    mw = b.SID_MACHINE_WORD.width or 0
+    vw = b.SID_VIRTUAL_ADDRESS.width or 0
+    zero_mw = b.zero(b.SID_MACHINE_WORD, "0")
+    one_mw = b.one(b.SID_MACHINE_WORD, "1")
 
     # ── exit(93): halt + exit_code := a0
     sem_exit = _InstrSemantics(
@@ -703,20 +733,35 @@ def _ecall_dispatch(
         exit_code_value=a0,
     )
 
-    # ── read(63): memory[a1] := input_byte; a0 := 1
-    a1_vaddr = b.slice(
-        b.SID_VIRTUAL_ADDRESS, a1,
-        (b.SID_VIRTUAL_ADDRESS.width or 0) - 1, 0,
-        "read-a1-vaddr",
-    )
-    mem_after_read = b.write(memory, a1_vaddr, input_byte, "read-write-input")
+    # ── read(63): multi-byte copy from input nodes into memory[a1..]
+    buffer_size = len(input_bytes)
+    size_const = b.consth(b.SID_MACHINE_WORD, buffer_size, f"buffer_size={buffer_size}")
+    # Cap a0 = min(a2, buffer_size). If a2 < buffer_size we deliver a2,
+    # otherwise we saturate at the builder's configured buffer size.
+    a2_fits = b.ult(a2, size_const, "a2<buffer_size")
+    bytes_read = b.ite(a2_fits, a2, size_const, "min(a2,buffer_size)")
+
+    mem_after_read: "Node" = memory
+    for k, byte in enumerate(input_bytes):
+        k_const = b.consth(b.SID_MACHINE_WORD, k, f"k={k}")
+        in_range = b.ult(k_const, a2, f"{k}<a2")
+        # Address = a1 + k, truncated to virtual-address width.
+        offset = b.consth(b.SID_MACHINE_WORD, k, f"+{k}")
+        addr_word = b.add(a1, offset, f"a1+{k}")
+        addr = b.slice(b.SID_VIRTUAL_ADDRESS, addr_word, vw - 1, 0, f"a1+{k}-vaddr")
+        written = b.write(mem_after_read, addr, byte, f"read-write-{k}")
+        mem_after_read = b.ite(in_range, written, mem_after_read,
+                               f"read-sel-{k}")
+
+    read_count_incr = b.add(read_count, one_mw, "read-count+1")
     sem_read = _InstrSemantics(
         name="read",
         enabled=b.and_(ecall, a7_is(SYSCALL_READ, "a7==read"), "ecall-read"),
-        rd_value=one,
+        rd_value=bytes_read,
         reg_write_target=10,
         writes_rd=True,
         next_memory=mem_after_read,
+        next_read_count=read_count_incr,
     )
 
     # ── write(64): a0 := a2 (bytes written)
@@ -728,17 +773,19 @@ def _ecall_dispatch(
         writes_rd=True,
     )
 
-    # ── brk(214): no-op (a0 unchanged)
+    # ── brk(214): if a0 != 0, set program-break to a0; return new break.
+    a0_nonzero = b.neq(a0, zero_mw, "a0!=0")
+    new_break = b.ite(a0_nonzero, a0, program_break, "brk-new")
     sem_brk = _InstrSemantics(
         name="brk",
         enabled=b.and_(ecall, a7_is(SYSCALL_BRK, "a7==brk"), "ecall-brk"),
-        rd_value=a0,
+        rd_value=new_break,
         reg_write_target=10,
         writes_rd=True,
+        next_program_break=new_break,
     )
 
-    # ── unknown syscall: halt, but don't touch exit_code. Acts as a safe
-    # fall-through for any ECALL with an unrecognized ``a7``.
+    # ── unknown syscall: halt, but don't touch exit_code.
     known_a7 = b.or_(
         b.or_(a7_is(SYSCALL_EXIT, "a7==exit"), a7_is(SYSCALL_READ, "a7==read"),
               "known-a"),

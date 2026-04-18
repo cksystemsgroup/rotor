@@ -81,6 +81,39 @@ def test_read_byte_bounded_below_ecall_cannot_reach_lbu() -> None:
         assert result.verdict == "unsat"
 
 
+def test_read_four_bytes_sum_matches_target() -> None:
+    """BMC should find four input bytes whose sum equals a chosen target.
+
+    ``sum4()`` reads 4 bytes via a single ecall, then sums them into a0.
+    Asking for a0 == 10 at the PC just after the final add should be SAT
+    with distinct-per-position input bytes from the multi-byte read.
+    """
+    from rotor import ModelConfig, RISCVBinary, RotorInstance
+    from rotor.expr import ExpressionCompiler
+
+    with RISCVBinary(_fixture("readsum.elf")) as binary:
+        low, high = binary.function_bounds("sum4")
+        cfg = ModelConfig(
+            is_64bit=True, code_start=low, code_end=high,
+            solver="bitwuzla", bound=35, model_backend="python",
+        )
+        inst = RotorInstance(binary, cfg)
+        inst.build_machine()
+        # 0x1120c is immediately after `add a0, a0, a1` (the final sum).
+        target_pc = 0x1120c
+        node = ExpressionCompiler.compile(
+            inst, f"pc == 0x{target_pc:x} && a0 == 10"
+        )
+        inst.add_bad(node, "after-sum a0==10")
+        result = inst.check()
+        assert result.verdict == "sat"
+        frame = next(f for f in result.witness if f["step"] == result.steps)
+        assert frame["assignments"]["pc"] == target_pc
+        assert frame["assignments"]["register-file[10]"] == 10
+        # After exactly one read syscall, the read-count state should be 1.
+        assert frame["assignments"]["read-count"] == 1
+
+
 def test_ecall_halts_the_machine() -> None:
     """After the ecall in read_byte(), bounded execution past it keeps
     halted=0 only until the exit-style syscall; the read syscall does not

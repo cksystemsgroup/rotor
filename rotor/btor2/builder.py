@@ -294,7 +294,13 @@ class RISCVMachineBuilder(BTOR2Builder):
         # Per-core exit-code latches (set by the exit syscall).
         self._exit_code_nodes: dict[int, Node] = {}
         # Per-core fresh-input byte nodes (read syscall input source).
-        self._input_byte_nodes: dict[int, Node] = {}
+        # self._input_byte_nodes[core] is a list of ``read_buffer_size``
+        # independent ``input`` nodes, one per position in the read buffer.
+        self._input_byte_nodes: dict[int, list[Node]] = {}
+        # Per-core program-break state (set by the brk syscall).
+        self._program_break_nodes: dict[int, Node] = {}
+        # Per-core read-count state (increments on every read syscall).
+        self._read_count_nodes: dict[int, Node] = {}
 
     # -------------------------------------------------------------- lifecycle
 
@@ -465,11 +471,43 @@ class RISCVMachineBuilder(BTOR2Builder):
                           f"init {exit_symbol}")
             )
 
+            brk_symbol = f"core{core}-program-break" if self.config.cores > 1 else "program-break"
+            program_break = self.state(self.SID_MACHINE_WORD, brk_symbol, "program break")
+            self._program_break_nodes[core] = program_break
+            self._state.state_nodes[brk_symbol] = program_break
+            brk_init_value = self.consth(
+                self.SID_MACHINE_WORD,
+                self.config.program_break_init,
+                f"brk_init=0x{self.config.program_break_init:x}",
+            )
+            self._state.init_nodes.append(
+                self.init(self.SID_MACHINE_WORD, program_break, brk_init_value,
+                          f"init {brk_symbol}")
+            )
+
+            rc_symbol = f"core{core}-read-count" if self.config.cores > 1 else "read-count"
+            read_count = self.state(self.SID_MACHINE_WORD, rc_symbol, "read count")
+            self._read_count_nodes[core] = read_count
+            self._state.state_nodes[rc_symbol] = read_count
+            self._state.init_nodes.append(
+                self.init(self.SID_MACHINE_WORD, read_count,
+                          self.zero(self.SID_MACHINE_WORD, "0"),
+                          f"init {rc_symbol}")
+            )
+
             assert self.SID_BYTE is not None
-            input_symbol = f"core{core}-input-byte" if self.config.cores > 1 else "input-byte"
-            input_byte = self.input(self.SID_BYTE, input_symbol, "read syscall byte")
-            self._input_byte_nodes[core] = input_byte
-            self._state.input_nodes[input_symbol] = input_byte
+            buffer_size = max(1, getattr(self.config, "read_buffer_size", 64))
+            input_bytes: list[Node] = []
+            for k in range(buffer_size):
+                input_symbol = (
+                    f"core{core}-input-byte-{k}" if self.config.cores > 1
+                    else f"input-byte-{k}"
+                )
+                node = self.input(self.SID_BYTE, input_symbol,
+                                  f"read syscall byte #{k}")
+                input_bytes.append(node)
+                self._state.input_nodes[input_symbol] = node
+            self._input_byte_nodes[core] = input_bytes
 
         # Delegate per-core transition logic to the RISC-V ISA module.
         build_fetch_decode_execute(self)
