@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rotor"
+version = "0.1.0"
+description = "A BTOR2 compiler for RISC-V questions"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+    "pyelftools>=0.30",
+    "z3-solver>=4.13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+rotor = "rotor.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["rotor*"]
+exclude = ["tests*", "examples*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

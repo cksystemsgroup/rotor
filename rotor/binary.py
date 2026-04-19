@@ -1,0 +1,104 @@
+"""ELF loading and per-function instruction enumeration.
+
+Minimal M1 surface:
+- Load a RISC-V ELF via pyelftools.
+- Enumerate symbols; report function (start, end) ranges.
+- Yield 32-bit instruction words at each PC in a function.
+
+Compressed (RVC) instructions are out of scope for M1 — fixtures are
+built with -march=rv64im so the stream is pure 32-bit.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterator
+
+from elftools.elf.elffile import ELFFile
+from elftools.elf.sections import SymbolTableSection
+
+
+@dataclass(frozen=True)
+class Function:
+    name: str
+    start: int   # inclusive
+    end: int     # exclusive
+
+    def contains(self, pc: int) -> bool:
+        return self.start <= pc < self.end
+
+
+@dataclass(frozen=True)
+class Instruction:
+    pc: int
+    word: int    # 32-bit RISC-V instruction word
+
+
+class RISCVBinary:
+    """Read-only view of a RISC-V ELF binary."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self._fh = open(self.path, "rb")
+        self._elf = ELFFile(self._fh)
+        if self._elf.get_machine_arch() != "RISC-V":
+            raise ValueError(f"not a RISC-V ELF: {self.path}")
+        self.is_64bit = self._elf.elfclass == 64
+        self.entry = self._elf["e_entry"]
+        self._functions: dict[str, Function] | None = None
+        self._text_cache: dict[int, bytes] = {}
+
+    def close(self) -> None:
+        self._fh.close()
+
+    def __enter__(self) -> "RISCVBinary":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    @property
+    def functions(self) -> dict[str, Function]:
+        if self._functions is None:
+            self._functions = dict(self._enumerate_functions())
+        return self._functions
+
+    def function(self, name: str) -> Function:
+        try:
+            return self.functions[name]
+        except KeyError as exc:
+            raise KeyError(f"function {name!r} not found in {self.path}") from exc
+
+    def instructions(self, fn: Function) -> Iterator[Instruction]:
+        """Yield 32-bit instruction words in [fn.start, fn.end)."""
+        data = self._read_range(fn.start, fn.end)
+        for offset in range(0, len(data), 4):
+            word = int.from_bytes(data[offset:offset + 4], "little")
+            yield Instruction(pc=fn.start + offset, word=word)
+
+    def _enumerate_functions(self) -> Iterator[tuple[str, Function]]:
+        for section in self._elf.iter_sections():
+            if not isinstance(section, SymbolTableSection):
+                continue
+            for sym in section.iter_symbols():
+                if sym["st_info"]["type"] != "STT_FUNC":
+                    continue
+                size = sym["st_size"]
+                if size == 0:
+                    continue
+                start = sym["st_value"]
+                yield sym.name, Function(name=sym.name, start=start, end=start + size)
+
+    def _read_range(self, start: int, end: int) -> bytes:
+        """Read raw bytes spanning [start, end) from loadable segments."""
+        # Simple path: find the PT_LOAD segment containing `start` and slice.
+        for seg in self._elf.iter_segments():
+            if seg["p_type"] != "PT_LOAD":
+                continue
+            vbeg = seg["p_vaddr"]
+            vend = vbeg + seg["p_filesz"]
+            if vbeg <= start and end <= vend:
+                data = seg.data()
+                return data[start - vbeg:end - vbeg]
+        raise ValueError(f"range 0x{start:x}..0x{end:x} not covered by any PT_LOAD segment")
