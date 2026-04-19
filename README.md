@@ -20,6 +20,64 @@ Group, University of Salzburg.
 
 ---
 
+## Quick start
+
+Install from the repository root:
+
+```bash
+pip install -e .
+```
+
+Everything below uses `tests/fixtures/add2.elf` — a two-function test
+binary (`add2` and `sign`). Swap in your own RV64I ELF compiled with
+`-g` and `-march=rv64im` (no compressed instructions yet) to try it on
+real code.
+
+```console
+$ rotor info tests/fixtures/add2.elf --functions
+path      : tests/fixtures/add2.elf
+is_64bit  : True
+entry     : 0x100b0
+code      : 0x100b0..0x100d0 (32 bytes)
+functions :
+  0x000100b0 +8    add2
+  0x000100b8 +24   sign
+
+$ rotor disasm tests/fixtures/add2.elf --function add2
+  0x000100b0: addw a0, a0, a1         ; add2.c:11
+  0x000100b4: ret                     ; add2.c:11
+
+$ rotor reach tests/fixtures/add2.elf --function add2 --target 0x100b4 --bound 2
+verdict  : reachable
+bound    : 2
+step     : 1
+backend  : z3-bmc
+```
+
+Exit codes follow the convention `0` = safe / proved / equivalent,
+`1` = reached / found / differs, `2` = unknown / error. On a reachable
+verdict, a source-annotated counterexample trace is written to stderr
+(or to a file via `--trace PATH`).
+
+The CLI subcommands map 1-to-1 to the Python API:
+
+```python
+from rotor import RotorAPI
+
+with RotorAPI("tests/fixtures/add2.elf", default_bound=2) as api:
+    add2 = api.binary.function("add2")
+    result = api.can_reach(function="add2", target_pc=add2.start + 4)
+    if result.verdict == "reachable":
+        print(result.trace.to_markdown())
+```
+
+Currently shipped verbs (L0 today): `info`, `disasm`, `reach` /
+`can_reach`. Additional verbs (`verify`, `find-input`, `equivalent`)
+land in later milestones under the same external contract — see
+[`PLAN.md`](PLAN.md).
+
+---
+
 ## The architectural principle
 
 Rotor is organized around a single invariant:

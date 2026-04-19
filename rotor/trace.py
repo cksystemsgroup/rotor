@@ -11,18 +11,9 @@ from pathlib import Path
 from typing import Optional
 
 from rotor.binary import Function, RISCVBinary
-from rotor.btor2.riscv.decoder import Decoded
 from rotor.dwarf import DwarfLineMap, SourceLocation
+from rotor.riscv.disasm import ABI, disasm
 from rotor.witness import MachineStep, simulate
-
-ABI = (
-    "zero", "ra", "sp", "gp", "tp",
-    "t0", "t1", "t2",
-    "s0", "s1",
-    "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
-    "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
-    "t3", "t4", "t5", "t6",
-)
 
 
 @dataclass(frozen=True)
@@ -56,10 +47,10 @@ class Trace:
         lines.append("| step | pc       | instruction            | source               |")
         lines.append("|-----:|:---------|:-----------------------|:---------------------|")
         for st in self.steps:
-            disasm = _disasm(st.decoded) if st.decoded is not None else "<no instruction>"
+            disasm_str = disasm(st.decoded) if st.decoded is not None else "<no instruction>"
             src = self.source_by_pc.get(st.pc)
             src_cell = f"{Path(src.file).name}:{src.line}" if src else "-"
-            lines.append(f"| {st.step:>4} | 0x{st.pc:06x} | {disasm:<22} | {src_cell:<20} |")
+            lines.append(f"| {st.step:>4} | 0x{st.pc:06x} | {disasm_str:<22} | {src_cell:<20} |")
         lines.append("")
         lines.append("## Initial register values (witness)")
         lines.append("")
@@ -116,33 +107,3 @@ def build_trace(
         source_by_pc=source_by_pc,
         initial_regs=dict(initial_regs),
     )
-
-
-# ---------------------------------------------------------------------------
-
-def _disasm(d: Decoded) -> str:
-    """Terse assembler rendering, recognizing common pseudo-instructions."""
-    r = ABI
-    if d.mnem == "jalr" and d.rd == 0 and d.rs1 == 1 and d.imm == 0:
-        return "ret"
-    if d.mnem == "addi" and d.rs1 == 0:
-        return f"li {r[d.rd]}, {d.imm}"
-    if d.mnem == "addi" and d.imm == 0:
-        return f"mv {r[d.rd]}, {r[d.rs1]}"
-    if d.mnem == "sub" and d.rs1 == 0:
-        return f"neg {r[d.rd]}, {r[d.rs2]}"
-    if d.mnem == "sltu" and d.rs1 == 0:
-        return f"snez {r[d.rd]}, {r[d.rs2]}"
-    if d.mnem == "blt" and d.rs1 == 0:
-        return f"bgtz {r[d.rs2]}, {d.imm:+d}"
-    if d.mnem == "blt" and d.rs2 == 0:
-        return f"bltz {r[d.rs1]}, {d.imm:+d}"
-    if d.mnem in ("addi",):
-        return f"{d.mnem} {r[d.rd]}, {r[d.rs1]}, {d.imm}"
-    if d.mnem in ("addw", "sub", "sltu"):
-        return f"{d.mnem} {r[d.rd]}, {r[d.rs1]}, {r[d.rs2]}"
-    if d.mnem == "blt":
-        return f"blt {r[d.rs1]}, {r[d.rs2]}, {d.imm:+d}"
-    if d.mnem == "jalr":
-        return f"jalr {r[d.rd]}, {d.imm}({r[d.rs1]})"
-    return d.mnem  # pragma: no cover
