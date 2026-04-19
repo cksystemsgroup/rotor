@@ -1,7 +1,8 @@
 """High-level entry point for rotor.
 
-M1 exposes only can_reach. Additional verbs (find_input, verify,
-are_equivalent) land in later milestones under the same architecture.
+M2 exposes can_reach with a source-lifted Trace on reachable verdicts.
+Additional verbs (find_input, verify, are_equivalent) land later under
+the same architecture.
 """
 
 from __future__ import annotations
@@ -11,8 +12,11 @@ from pathlib import Path
 from typing import Optional, Union
 
 from rotor.binary import RISCVBinary
-from rotor.instance import RotorInstance
-from rotor.solvers.base import SolverBackend, SolverResult
+from rotor.dwarf import DwarfLineMap
+from rotor.engine import EngineConfig, RotorEngine
+from rotor.solvers.base import SolverBackend
+from rotor.solvers.portfolio import Portfolio
+from rotor.trace import Trace, build_trace
 
 
 @dataclass(frozen=True)
@@ -23,6 +27,7 @@ class ReachResult:
     initial_regs: dict[str, int]
     elapsed: float
     backend: str
+    trace: Optional[Trace] = None      # populated when verdict == "reachable"
 
 
 class RotorAPI:
@@ -32,15 +37,27 @@ class RotorAPI:
         *,
         default_bound: int = 20,
         backend: Optional[SolverBackend] = None,
+        portfolio: Optional[Portfolio] = None,
     ) -> None:
         self._binary_path = Path(binary_path)
         self._binary = RISCVBinary(self._binary_path)
-        self._default_bound = default_bound
-        self._backend = backend
+        self._dwarf = DwarfLineMap(self._binary_path)
+        self._engine = RotorEngine(
+            self._binary,
+            config=EngineConfig(
+                backend=backend,
+                portfolio=portfolio,
+                default_bound=default_bound,
+            ),
+        )
 
     @property
     def binary(self) -> RISCVBinary:
         return self._binary
+
+    @property
+    def engine(self) -> RotorEngine:
+        return self._engine
 
     def close(self) -> None:
         self._binary.close()
@@ -58,13 +75,21 @@ class RotorAPI:
         bound: Optional[int] = None,
         timeout: Optional[float] = None,
     ) -> ReachResult:
-        instance = RotorInstance.for_reach(
-            self._binary, function, target_pc, backend=self._backend
-        )
-        result: SolverResult = instance.check(
-            bound=bound if bound is not None else self._default_bound,
-            timeout=timeout,
-        )
+        result = self._engine.check_reach(function, target_pc, bound=bound, timeout=timeout)
+        trace = None
+        if result.verdict == "reachable":
+            trace = build_trace(
+                binary=self._binary,
+                function=function,
+                target_pc=target_pc,
+                verdict=result.verdict,
+                bound=result.bound,
+                reached_at=result.step,
+                elapsed=result.elapsed,
+                backend=result.backend,
+                initial_regs=result.initial_regs,
+                dwarf=self._dwarf,
+            )
         return ReachResult(
             verdict=result.verdict,
             bound=result.bound,
@@ -72,4 +97,5 @@ class RotorAPI:
             initial_regs=result.initial_regs,
             elapsed=result.elapsed,
             backend=result.backend,
+            trace=trace,
         )

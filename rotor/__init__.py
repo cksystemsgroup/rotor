@@ -5,7 +5,21 @@ L0 entry points:
     from rotor import RISCVBinary, RotorAPI
 """
 
-from rotor.binary import RISCVBinary, Function
-from rotor.api import RotorAPI, ReachResult
+from rotor.api import ReachResult, RotorAPI
+from rotor.binary import Function, RISCVBinary
+from rotor.engine import EngineConfig, RotorEngine
+from rotor.solvers import Portfolio, PortfolioEntry, Z3BMC
+from rotor.trace import Trace
 
-__all__ = ["RISCVBinary", "Function", "RotorAPI", "ReachResult"]
+__all__ = [
+    "RISCVBinary",
+    "Function",
+    "RotorAPI",
+    "ReachResult",
+    "RotorEngine",
+    "EngineConfig",
+    "Portfolio",
+    "PortfolioEntry",
+    "Z3BMC",
+    "Trace",
+]
