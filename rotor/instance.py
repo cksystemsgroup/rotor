@@ -11,8 +11,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 from rotor.binary import RISCVBinary
-from rotor.btor2.builder import ReachSpec, build_reach
+from rotor.btor2.builder import build_reach
 from rotor.btor2.nodes import Model
+from rotor.ir.spec import ReachSpec
 from rotor.solvers.base import SolverBackend, SolverResult
 from rotor.solvers.z3bv import Z3BMC
 

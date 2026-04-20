@@ -15,23 +15,15 @@ unless the return target is also inside fn.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from rotor.binary import Function, RISCVBinary
 from rotor.btor2.nodes import Model, Node, Sort
 from rotor.btor2.riscv.decoder import decode
 from rotor.btor2.riscv.isa import lower
+from rotor.ir.spec import ReachSpec
 
 BV1 = Sort(1)
 BV64 = Sort(64)
 NREGS = 32
-
-
-@dataclass(frozen=True)
-class ReachSpec:
-    """can_reach obligation: target PC reachable within bound cycles."""
-    function: str
-    target_pc: int
 
 
 class UnsupportedInstruction(ValueError):

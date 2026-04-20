@@ -1,21 +1,24 @@
-"""Orchestration: compile a question to BTOR2, dispatch to a backend.
+"""Orchestration: compile a question to BTOR2 via an emitter, dispatch to a backend.
 
-RotorEngine owns a RISCVBinary plus a backend choice. Callers invoke
-one method per question (`check_reach`, future `check_verify` / ...).
-The engine compiles the question to a BTOR2 Model and hands it to a
-single backend or a Portfolio racer.
+RotorEngine owns a RISCVBinary plus three choices:
 
-RotorAPI is a thin wrapper on top that adds default bounds, DWARF
-lookup, and witness-to-trace rendering.
+    emitter_factory  — which IR produces the BTOR2 Model (default: IdentityEmitter).
+    backend          — which single solver answers the obligation.
+    portfolio        — alternative to `backend`: race multiple solvers.
+
+Callers invoke one method per question (`check_reach`, future
+`check_verify` / ...). The engine compiles the question through the
+emitter seam and hands the Model to the chosen executor.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional, Union
+from dataclasses import dataclass
+from typing import Callable, Optional, Union
 
 from rotor.binary import RISCVBinary
-from rotor.btor2.builder import ReachSpec, build_reach
+from rotor.ir.emitter import BTOR2Emitter, IdentityEmitter
+from rotor.ir.spec import ReachSpec
 from rotor.solvers.base import SolverBackend, SolverResult
 from rotor.solvers.portfolio import Portfolio
 from rotor.solvers.z3bv import Z3BMC
@@ -23,6 +26,7 @@ from rotor.solvers.z3bv import Z3BMC
 
 @dataclass
 class EngineConfig:
+    emitter_factory: Callable[[RISCVBinary], BTOR2Emitter] = IdentityEmitter
     backend: Optional[SolverBackend] = None
     portfolio: Optional[Portfolio] = None
     default_bound: int = 20
@@ -37,6 +41,11 @@ class RotorEngine:
     ) -> None:
         self.binary = binary
         self.config = config or EngineConfig()
+        self._emitter: BTOR2Emitter = self.config.emitter_factory(binary)
+
+    @property
+    def emitter(self) -> BTOR2Emitter:
+        return self._emitter
 
     def _executor(self) -> Union[SolverBackend, Portfolio]:
         if self.config.portfolio is not None:
@@ -51,7 +60,7 @@ class RotorEngine:
         timeout: Optional[float] = None,
     ) -> SolverResult:
         spec = ReachSpec(function=function, target_pc=target_pc)
-        model = build_reach(self.binary, spec)
+        model = self._emitter.emit(spec)
         executor = self._executor()
         if isinstance(executor, Portfolio):
             return executor.check_reach(model)
