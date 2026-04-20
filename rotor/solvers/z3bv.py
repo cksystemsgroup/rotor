@@ -8,16 +8,19 @@ Every check_reach call runs on a fresh z3.Context — the Z3 Python API
 is not thread-safe with a shared default context, and the portfolio
 backend runs backends concurrently. Each fresh context is cheap and
 lets us race without synchronization.
+
+M6 adds array-sort support: memory states become `z3.Array(bv64, bv8)`,
+`read` lowers to `z3.Select`, and `write` lowers to `z3.Store`.
 """
 
 from __future__ import annotations
 
 import time
-from typing import Optional
+from typing import Optional, Union
 
 import z3
 
-from rotor.btor2.nodes import Model, Node
+from rotor.btor2.nodes import ArraySort, Model, Node, Sort
 from rotor.solvers.base import SolverResult
 
 
@@ -48,13 +51,13 @@ class Z3BMC:
             solver.set("timeout", int(timeout * 1000))
 
         const_cache: dict[int, z3.BitVecRef] = {}
-        initial_state_syms: dict[int, z3.BitVecRef] = {}
-        per_step_vals: list[dict[int, z3.BitVecRef]] = []
+        initial_state_syms: dict[int, z3.ExprRef] = {}
+        per_step_vals: list[dict[int, z3.ExprRef]] = []
 
         # cycle 0
-        state_vals_0: dict[int, z3.BitVecRef] = {}
+        state_vals_0: dict[int, z3.ExprRef] = {}
         for st in states:
-            sym = z3.BitVec(f"{st.name}@0", st.sort.width, ctx=ctx)
+            sym = _fresh_state(st, 0, ctx)
             state_vals_0[st.id] = sym
             initial_state_syms[st.id] = sym
         vals_0 = _fold(model, state_vals_0, const_cache, ctx, bv0, bv1)
@@ -66,9 +69,9 @@ class Z3BMC:
         # cycles 1..bound
         prev_vals = vals_0
         for k in range(1, bound + 1):
-            state_vals_k: dict[int, z3.BitVecRef] = {}
+            state_vals_k: dict[int, z3.ExprRef] = {}
             for st in states:
-                state_vals_k[st.id] = z3.BitVec(f"{st.name}@{k}", st.sort.width, ctx=ctx)
+                state_vals_k[st.id] = _fresh_state(st, k, ctx)
             vals_k = _fold(model, state_vals_k, const_cache, ctx, bv0, bv1)
             for nxt in nexts:
                 state, expr = nxt.operands
@@ -96,6 +99,8 @@ class Z3BMC:
             )
             initial_regs: dict[str, int] = {}
             for st in states:
+                if not isinstance(st.sort, Sort):
+                    continue              # array-sort states aren't scalar registers
                 v = z3model.eval(initial_state_syms[st.id], model_completion=True)
                 initial_regs[st.name] = v.as_long()
             return SolverResult(
@@ -124,17 +129,31 @@ class Z3BMC:
 
 # ---------------------------------------------------------------------------
 
+def _fresh_state(state: Node, k: int, ctx: z3.Context) -> z3.ExprRef:
+    """Create a fresh Z3 variable for `state` at cycle k."""
+    name = f"{state.name}@{k}"
+    sort = state.sort
+    if isinstance(sort, ArraySort):
+        return z3.Array(
+            name,
+            z3.BitVecSort(sort.index.width, ctx=ctx),
+            z3.BitVecSort(sort.element.width, ctx=ctx),
+        )
+    assert isinstance(sort, Sort)
+    return z3.BitVec(name, sort.width, ctx=ctx)
+
+
 def _fold(
     model: Model,
-    state_vals: dict[int, z3.BitVecRef],
+    state_vals: dict[int, z3.ExprRef],
     const_cache: dict[int, z3.BitVecRef],
     ctx: z3.Context,
     bv0: z3.BitVecRef,
     bv1: z3.BitVecRef,
-) -> dict[int, z3.BitVecRef]:
-    vals: dict[int, z3.BitVecRef] = {}
+) -> dict[int, z3.ExprRef]:
+    vals: dict[int, z3.ExprRef] = {}
     for n in model.nodes:
-        if n.kind == "sort":
+        if n.kind in ("sort", "array_sort"):
             continue
         if n.kind == "const":
             if n.id not in const_cache:
@@ -159,6 +178,12 @@ def _fold(
                 vals[n.id] = z3.ZeroExt(extra, vals[a.id])
             else:
                 vals[n.id] = z3.SignExt(extra, vals[a.id])
+        elif n.kind == "read":
+            array, addr = n.operands
+            vals[n.id] = z3.Select(vals[array.id], vals[addr.id])
+        elif n.kind == "write":
+            array, addr, value = n.operands
+            vals[n.id] = z3.Store(vals[array.id], vals[addr.id], vals[value.id])
         elif n.kind in ("init", "next", "bad"):
             continue
         else:
@@ -214,4 +239,6 @@ def _apply_op(
         return z3.If(a > b, bv1, bv0)
     if opname == "sgte":
         return z3.If(a >= b, bv1, bv0)
+    if opname == "concat":
+        return z3.Concat(a, b)
     raise ValueError(f"unknown op: {opname!r}")

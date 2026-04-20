@@ -1,6 +1,7 @@
 """Decode a 32-bit RISC-V instruction word into a tagged record.
 
-M5 covers the full RV64I base instruction set:
+M6 covers the full RV64I base instruction set plus byte-addressed
+loads and stores:
 
     OP-IMM      addi  slti  sltiu  xori  ori  andi  slli  srli  srai
     OP-IMM-32   addiw  slliw  srliw  sraiw
@@ -11,14 +12,15 @@ M5 covers the full RV64I base instruction set:
     AUIPC                                                                (U)
     JAL                                                                  (J)
     JALR                                                                 (I)
+    LOAD        lb  lh  lw  ld  lbu  lhu  lwu                           (I)
+    STORE       sb  sh  sw  sd                                          (S)
     MISC-MEM    fence                                          (no-op)
 
-Loads / stores (LOAD, STORE) and SYSTEM (ecall, ebreak) are out of
-scope for M5; they belong to Phase 9 (memory) and Phase F (syscalls)
-respectively.
+SYSTEM instructions (ecall, ebreak) remain out of scope; they belong
+to Phase F (syscalls).
 
 Compressed (RVC) instructions are not handled — fixtures must compile
-with -march=rv64im (no `c`) so the stream is pure 32-bit.
+with -march=rv64i (no `c`) so the stream is pure 32-bit.
 
 decode() returns None for any opcode outside the supported subset;
 callers treat that as an unsupported-instruction error.
@@ -39,6 +41,8 @@ _LUI          = 0b0110111
 _AUIPC        = 0b0010111
 _JAL          = 0b1101111
 _JALR         = 0b1100111
+_LOAD         = 0b0000011
+_STORE        = 0b0100011
 _MISC_MEM     = 0b0001111
 
 
@@ -223,6 +227,38 @@ def _decode_misc_mem(word: int) -> Optional[Decoded]:
     return None
 
 
+def _decode_load(word: int) -> Optional[Decoded]:
+    rd, funct3, rs1 = _rd(word), _funct3(word), _rs1(word)
+    imm = _sext(_bits(word, 31, 20), 12)
+    m = {
+        0b000: "lb",
+        0b001: "lh",
+        0b010: "lw",
+        0b011: "ld",
+        0b100: "lbu",
+        0b101: "lhu",
+        0b110: "lwu",
+    }.get(funct3)
+    if m is None:
+        return None
+    return Decoded(m, rd, rs1, 0, imm)
+
+
+def _decode_store(word: int) -> Optional[Decoded]:
+    funct3, rs1, rs2 = _funct3(word), _rs1(word), _rs2(word)
+    imm = (_funct7(word) << 5) | _bits(word, 11, 7)
+    imm = _sext(imm, 12)
+    m = {
+        0b000: "sb",
+        0b001: "sh",
+        0b010: "sw",
+        0b011: "sd",
+    }.get(funct3)
+    if m is None:
+        return None
+    return Decoded(m, 0, rs1, rs2, imm)
+
+
 _OPCODE_TABLE = {
     _OP_IMM:    _decode_op_imm,
     _OP_IMM_32: _decode_op_imm_32,
@@ -233,6 +269,8 @@ _OPCODE_TABLE = {
     _AUIPC:     _decode_auipc,
     _JAL:       _decode_jal,
     _JALR:      _decode_jalr,
+    _LOAD:      _decode_load,
+    _STORE:     _decode_store,
     _MISC_MEM:  _decode_misc_mem,
 }
 

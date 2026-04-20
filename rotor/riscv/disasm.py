@@ -24,6 +24,8 @@ _RR_32 = {"addw", "subw", "sllw", "srlw", "sraw"}
 _RI_64 = {"addi", "andi", "ori", "xori", "slti", "sltiu", "slli", "srli", "srai"}
 _RI_32 = {"addiw", "slliw", "srliw", "sraiw"}
 _BR    = {"beq", "bne", "blt", "bge", "bltu", "bgeu"}
+_LOAD  = {"lb", "lh", "lw", "ld", "lbu", "lhu", "lwu"}
+_STORE = {"sb", "sh", "sw", "sd"}
 
 
 def disasm(d: Decoded) -> str:
@@ -86,5 +88,9 @@ def disasm(d: Decoded) -> str:
         return f"jal {r[d.rd]}, {d.imm:+d}"
     if d.mnem == "jalr":
         return f"jalr {r[d.rd]}, {d.imm}({r[d.rs1]})"
+    if d.mnem in _LOAD:
+        return f"{d.mnem} {r[d.rd]}, {d.imm}({r[d.rs1]})"
+    if d.mnem in _STORE:
+        return f"{d.mnem} {r[d.rs2]}, {d.imm}({r[d.rs1]})"
 
     return d.mnem                                  # pragma: no cover

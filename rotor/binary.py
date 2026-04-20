@@ -77,6 +77,29 @@ class RISCVBinary:
             word = int.from_bytes(data[offset:offset + 4], "little")
             yield Instruction(pc=fn.start + offset, word=word)
 
+    def loadable_bytes(self) -> Iterator[tuple[int, int]]:
+        """Yield (vaddr, byte) pairs for every file-backed byte in PT_LOAD.
+
+        These are the bytes the ELF loader would place in memory at process
+        start — `.text`, `.rodata`, `.data`, and anything else covered by
+        `p_filesz`. Zero-initialized `.bss` bytes (inside `p_memsz` but
+        outside `p_filesz`) are omitted here; rotor lets the memory model
+        treat them as free and the verifier learns bounds from use.
+        """
+        seen: set[int] = set()
+        for seg in self._elf.iter_segments():
+            if seg["p_type"] != "PT_LOAD":
+                continue
+            vbeg = seg["p_vaddr"]
+            data = seg.data()
+            filesz = seg["p_filesz"]
+            for offset in range(filesz):
+                addr = vbeg + offset
+                if addr in seen:
+                    continue                         # overlapping segment: first wins
+                seen.add(addr)
+                yield addr, data[offset]
+
     def _enumerate_functions(self) -> Iterator[tuple[str, Function]]:
         for section in self._elf.iter_sections():
             if not isinstance(section, SymbolTableSection):

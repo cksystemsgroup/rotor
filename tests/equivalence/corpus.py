@@ -29,6 +29,8 @@ class CorpusEntry:
 
 ADD2 = "tests/fixtures/add2.elf"
 BRANCHES = "tests/fixtures/branches.elf"
+MEMOPS = "tests/fixtures/memops.elf"
+RODATA = "tests/fixtures/rodata.elf"
 
 CORPUS: tuple[CorpusEntry, ...] = (
     # add2.elf — straight-line + simple conditional fixture (M1)
@@ -48,4 +50,23 @@ CORPUS: tuple[CorpusEntry, ...] = (
     CorpusEntry("branches-ret-reachable",    BRANCHES, "branches", 0x20, 7, "reachable",   7),
     CorpusEntry("branches-jal-reachable",    BRANCHES, "branches", 0x28, 6, "reachable",   6),
     CorpusEntry("branches-c4-unreach-at-2",  BRANCHES, "branches", 0x14, 2, "unreachable", None),
+
+    # memops.elf — exercises the M6 memory model (lw / sw / store-then-load).
+    CorpusEntry("load_sum-entry-trivial",    MEMOPS, "load_sum",  0x00, 0, "reachable",   0),
+    CorpusEntry("load_sum-second-lw",        MEMOPS, "load_sum",  0x04, 1, "reachable",   1),
+    CorpusEntry("load_sum-addw",             MEMOPS, "load_sum",  0x08, 2, "reachable",   2),
+    CorpusEntry("load_sum-ret",              MEMOPS, "load_sum",  0x0C, 3, "reachable",   3),
+    CorpusEntry("load_sum-unreach-at-0",     MEMOPS, "load_sum",  0x04, 0, "unreachable", None),
+
+    CorpusEntry("roundtrip-entry-trivial",   MEMOPS, "roundtrip", 0x00, 0, "reachable",   0),
+    CorpusEntry("roundtrip-after-sw",        MEMOPS, "roundtrip", 0x04, 1, "reachable",   1),
+    CorpusEntry("roundtrip-after-lw",        MEMOPS, "roundtrip", 0x08, 2, "reachable",   2),
+    CorpusEntry("roundtrip-ret",             MEMOPS, "roundtrip", 0x0C, 3, "reachable",   3),
+
+    # rodata.elf — exercises ELF segment init + lw from a rodata table.
+    CorpusEntry("pick-entry-trivial",        RODATA, "pick", 0x00, 0, "reachable",   0),
+    CorpusEntry("pick-after-auipc",          RODATA, "pick", 0x08, 2, "reachable",   2),
+    CorpusEntry("pick-lw",                   RODATA, "pick", 0x14, 5, "reachable",   5),
+    CorpusEntry("pick-ret",                  RODATA, "pick", 0x18, 6, "reachable",   6),
+    CorpusEntry("pick-unreach-at-4",         RODATA, "pick", 0x10, 3, "unreachable", None),
 )

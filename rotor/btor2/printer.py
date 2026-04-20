@@ -24,19 +24,23 @@ def _line(node: Node, model: Model) -> str:
         (width,) = node.operands
         return f"{node.id} sort bitvec {width}"
 
+    if node.kind == "array_sort":
+        idx_sid, elt_sid = node.operands
+        return f"{node.id} sort array {idx_sid} {elt_sid}"
+
     # init/next/bad are the only kinds that do not carry their own sort.
     # init/next borrow the state's sort; bad takes no sort.
     if node.kind == "init":
         state, expr = node.operands
-        return f"{node.id} init {model.sort_id(state.sort.width)} {state.id} {expr.id}"
+        return f"{node.id} init {model.sort_id_of(state.sort)} {state.id} {expr.id}"
     if node.kind == "next":
         state, expr = node.operands
-        return f"{node.id} next {model.sort_id(state.sort.width)} {state.id} {expr.id}"
+        return f"{node.id} next {model.sort_id_of(state.sort)} {state.id} {expr.id}"
     if node.kind == "bad":
         (expr,) = node.operands
         return f"{node.id} bad {expr.id}"
 
-    sort_id = _sort_id(node, model)
+    sort_id = model.sort_id_of(node.sort) if node.sort is not None else None
 
     if node.kind == "const":
         (value,) = node.operands
@@ -64,9 +68,12 @@ def _line(node: Node, model: Model) -> str:
         a, extra = node.operands
         return f"{node.id} {node.opname} {sort_id} {a.id} {extra}"
 
+    if node.kind == "read":
+        array, addr = node.operands
+        return f"{node.id} read {sort_id} {array.id} {addr.id}"
+
+    if node.kind == "write":
+        array, addr, value = node.operands
+        return f"{node.id} write {sort_id} {array.id} {addr.id} {value.id}"
+
     raise AssertionError(f"unknown node kind: {node.kind}")
-
-
-def _sort_id(node: Node, model: Model) -> int:
-    assert node.sort is not None
-    return model.sort_id(node.sort.width)

@@ -2,10 +2,14 @@
 
 Given the initial register values that the solver produced for a
 reachable verdict, the simulator steps the function deterministically
-(M5's machine model has no inputs beyond the free initial registers,
-so with those fixed the trajectory is unique) and records a
-MachineStep per cycle. The caller lifts those steps into a source
-trace.
+and records a MachineStep per cycle. The caller lifts those steps
+into a source trace.
+
+Memory (M6) is a sparse `dict[int, int]` byte mirror. It is seeded
+with every PT_LOAD byte from the ELF; reads to uninitialized bytes
+return 0, which matches the common case for freshly-mapped BSS or
+stack pages once the SMT solver has picked concrete values for the
+trajectory.
 
 The semantics here must match rotor/btor2/riscv/isa.py exactly — any
 divergence would invalidate the witness with respect to the BTOR2
@@ -23,6 +27,7 @@ from rotor.btor2.riscv.decoder import Decoded, decode
 XLEN = 64
 MASK = (1 << XLEN) - 1
 MASK32 = (1 << 32) - 1
+MASK8 = 0xFF
 SIGN_BIT = 1 << (XLEN - 1)
 
 
@@ -40,11 +45,19 @@ def simulate(
     function: Function,
     initial_regs: dict[str, int],
     max_steps: int,
+    initial_mem: Optional[dict[int, int]] = None,
 ) -> list[MachineStep]:
     """Run the machine from fn.start for up to max_steps cycles."""
     regs = [0] * 32
     for i in range(1, 32):
         regs[i] = initial_regs.get(f"x{i}", 0) & MASK
+
+    mem: dict[int, int] = {}
+    for vaddr, byte in binary.loadable_bytes():
+        mem[vaddr] = byte & MASK8
+    if initial_mem:
+        for addr, byte in initial_mem.items():
+            mem[addr & MASK] = byte & MASK8
 
     instructions: dict[int, Instruction] = {i.pc: i for i in binary.instructions(function)}
     pc = function.start
@@ -63,7 +76,7 @@ def simulate(
         )
         if inst is None or d is None:
             break                                  # machine left the function
-        pc = _step(d, pc, regs)
+        pc = _step(d, pc, regs, mem)
 
     return steps
 
@@ -72,11 +85,11 @@ def simulate(
 # Step semantics: dispatch on mnemonic.
 # ---------------------------------------------------------------------------
 
-def _step(d: Decoded, pc: int, regs: list[int]) -> int:
+def _step(d: Decoded, pc: int, regs: list[int], mem: Optional[dict[int, int]] = None) -> int:
     handler = _STEP.get(d.mnem)
     if handler is None:                            # pragma: no cover — decoder filters
         raise AssertionError(f"simulate: unsupported mnem {d.mnem!r}")
-    return handler(d, pc, regs)
+    return handler(d, pc, regs, mem if mem is not None else {})
 
 
 def _write(regs: list[int], rd: int, value: int) -> None:
@@ -100,203 +113,283 @@ def _sext32(v: int) -> int:
 
 
 # I-type
-def _h_addi(d, pc, regs):
+def _h_addi(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] + d.imm)
     return (pc + 4) & MASK
 
 
-def _h_xori(d, pc, regs):
+def _h_xori(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] ^ (d.imm & MASK))
     return (pc + 4) & MASK
 
 
-def _h_ori(d, pc, regs):
+def _h_ori(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] | (d.imm & MASK))
     return (pc + 4) & MASK
 
 
-def _h_andi(d, pc, regs):
+def _h_andi(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] & (d.imm & MASK))
     return (pc + 4) & MASK
 
 
-def _h_slti(d, pc, regs):
+def _h_slti(d, pc, regs, mem):
     _write(regs, d.rd, 1 if _signed64(regs[d.rs1]) < d.imm else 0)
     return (pc + 4) & MASK
 
 
-def _h_sltiu(d, pc, regs):
+def _h_sltiu(d, pc, regs, mem):
     _write(regs, d.rd, 1 if regs[d.rs1] < (d.imm & MASK) else 0)
     return (pc + 4) & MASK
 
 
-def _h_slli(d, pc, regs):
+def _h_slli(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] << (d.imm & 63))
     return (pc + 4) & MASK
 
 
-def _h_srli(d, pc, regs):
+def _h_srli(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] >> (d.imm & 63))
     return (pc + 4) & MASK
 
 
-def _h_srai(d, pc, regs):
+def _h_srai(d, pc, regs, mem):
     _write(regs, d.rd, _signed64(regs[d.rs1]) >> (d.imm & 63))
     return (pc + 4) & MASK
 
 
-def _h_addiw(d, pc, regs):
+def _h_addiw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32((regs[d.rs1] + d.imm) & MASK32))
     return (pc + 4) & MASK
 
 
-def _h_slliw(d, pc, regs):
+def _h_slliw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32((regs[d.rs1] << (d.imm & 31)) & MASK32))
     return (pc + 4) & MASK
 
 
-def _h_srliw(d, pc, regs):
+def _h_srliw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32(((regs[d.rs1] & MASK32) >> (d.imm & 31)) & MASK32))
     return (pc + 4) & MASK
 
 
-def _h_sraiw(d, pc, regs):
+def _h_sraiw(d, pc, regs, mem):
     lo = _signed32(regs[d.rs1])
     _write(regs, d.rd, _sext32((lo >> (d.imm & 31)) & MASK32))
     return (pc + 4) & MASK
 
 
 # R-type
-def _h_add(d, pc, regs):
+def _h_add(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] + regs[d.rs2])
     return (pc + 4) & MASK
 
 
-def _h_sub(d, pc, regs):
+def _h_sub(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] - regs[d.rs2])
     return (pc + 4) & MASK
 
 
-def _h_and(d, pc, regs):
+def _h_and(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] & regs[d.rs2])
     return (pc + 4) & MASK
 
 
-def _h_or(d, pc, regs):
+def _h_or(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] | regs[d.rs2])
     return (pc + 4) & MASK
 
 
-def _h_xor(d, pc, regs):
+def _h_xor(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] ^ regs[d.rs2])
     return (pc + 4) & MASK
 
 
-def _h_slt(d, pc, regs):
+def _h_slt(d, pc, regs, mem):
     _write(regs, d.rd, 1 if _signed64(regs[d.rs1]) < _signed64(regs[d.rs2]) else 0)
     return (pc + 4) & MASK
 
 
-def _h_sltu(d, pc, regs):
+def _h_sltu(d, pc, regs, mem):
     _write(regs, d.rd, 1 if regs[d.rs1] < regs[d.rs2] else 0)
     return (pc + 4) & MASK
 
 
-def _h_sll(d, pc, regs):
+def _h_sll(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] << (regs[d.rs2] & 63))
     return (pc + 4) & MASK
 
 
-def _h_srl(d, pc, regs):
+def _h_srl(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] >> (regs[d.rs2] & 63))
     return (pc + 4) & MASK
 
 
-def _h_sra(d, pc, regs):
+def _h_sra(d, pc, regs, mem):
     _write(regs, d.rd, _signed64(regs[d.rs1]) >> (regs[d.rs2] & 63))
     return (pc + 4) & MASK
 
 
 # OP-32
-def _h_addw(d, pc, regs):
+def _h_addw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32((regs[d.rs1] + regs[d.rs2]) & MASK32))
     return (pc + 4) & MASK
 
 
-def _h_subw(d, pc, regs):
+def _h_subw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32((regs[d.rs1] - regs[d.rs2]) & MASK32))
     return (pc + 4) & MASK
 
 
-def _h_sllw(d, pc, regs):
+def _h_sllw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32((regs[d.rs1] << (regs[d.rs2] & 31)) & MASK32))
     return (pc + 4) & MASK
 
 
-def _h_srlw(d, pc, regs):
+def _h_srlw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32(((regs[d.rs1] & MASK32) >> (regs[d.rs2] & 31)) & MASK32))
     return (pc + 4) & MASK
 
 
-def _h_sraw(d, pc, regs):
+def _h_sraw(d, pc, regs, mem):
     lo = _signed32(regs[d.rs1])
     _write(regs, d.rd, _sext32((lo >> (regs[d.rs2] & 31)) & MASK32))
     return (pc + 4) & MASK
 
 
 # Branches
-def _h_beq(d, pc, regs):
+def _h_beq(d, pc, regs, mem):
     return (pc + d.imm) & MASK if regs[d.rs1] == regs[d.rs2] else (pc + 4) & MASK
 
 
-def _h_bne(d, pc, regs):
+def _h_bne(d, pc, regs, mem):
     return (pc + d.imm) & MASK if regs[d.rs1] != regs[d.rs2] else (pc + 4) & MASK
 
 
-def _h_blt(d, pc, regs):
+def _h_blt(d, pc, regs, mem):
     return (pc + d.imm) & MASK if _signed64(regs[d.rs1]) < _signed64(regs[d.rs2]) else (pc + 4) & MASK
 
 
-def _h_bge(d, pc, regs):
+def _h_bge(d, pc, regs, mem):
     return (pc + d.imm) & MASK if _signed64(regs[d.rs1]) >= _signed64(regs[d.rs2]) else (pc + 4) & MASK
 
 
-def _h_bltu(d, pc, regs):
+def _h_bltu(d, pc, regs, mem):
     return (pc + d.imm) & MASK if regs[d.rs1] < regs[d.rs2] else (pc + 4) & MASK
 
 
-def _h_bgeu(d, pc, regs):
+def _h_bgeu(d, pc, regs, mem):
     return (pc + d.imm) & MASK if regs[d.rs1] >= regs[d.rs2] else (pc + 4) & MASK
 
 
 # U / J
-def _h_lui(d, pc, regs):
+def _h_lui(d, pc, regs, mem):
     _write(regs, d.rd, d.imm)
     return (pc + 4) & MASK
 
 
-def _h_auipc(d, pc, regs):
+def _h_auipc(d, pc, regs, mem):
     _write(regs, d.rd, (pc + d.imm) & MASK)
     return (pc + 4) & MASK
 
 
-def _h_jal(d, pc, regs):
+def _h_jal(d, pc, regs, mem):
     _write(regs, d.rd, (pc + 4) & MASK)
     return (pc + d.imm) & MASK
 
 
-def _h_jalr(d, pc, regs):
+def _h_jalr(d, pc, regs, mem):
     target = ((regs[d.rs1] + d.imm) & MASK) & ~1
     _write(regs, d.rd, (pc + 4) & MASK)
     return target
 
 
-# Misc
-def _h_fence(d, pc, regs):
+# Loads / stores. Byte-addressed memory: little-endian multi-byte access.
+def _read_bytes(mem: dict[int, int], addr: int, nbytes: int) -> int:
+    value = 0
+    for i in range(nbytes):
+        b = mem.get((addr + i) & MASK, 0) & MASK8
+        value |= b << (8 * i)
+    return value
+
+
+def _write_bytes(mem: dict[int, int], addr: int, value: int, nbytes: int) -> None:
+    for i in range(nbytes):
+        mem[(addr + i) & MASK] = (value >> (8 * i)) & MASK8
+
+
+def _sext_n(value: int, nbits: int) -> int:
+    sign = 1 << (nbits - 1)
+    mask = (1 << nbits) - 1
+    value &= mask
+    return (value - (1 << nbits)) & MASK if value & sign else value
+
+
+def _h_lb(d, pc, regs, mem):
+    v = _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 1)
+    _write(regs, d.rd, _sext_n(v, 8))
     return (pc + 4) & MASK
 
 
-_STEP: dict[str, Callable[[Decoded, int, list[int]], int]] = {
+def _h_lh(d, pc, regs, mem):
+    v = _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 2)
+    _write(regs, d.rd, _sext_n(v, 16))
+    return (pc + 4) & MASK
+
+
+def _h_lw(d, pc, regs, mem):
+    v = _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 4)
+    _write(regs, d.rd, _sext_n(v, 32))
+    return (pc + 4) & MASK
+
+
+def _h_ld(d, pc, regs, mem):
+    v = _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 8)
+    _write(regs, d.rd, v)
+    return (pc + 4) & MASK
+
+
+def _h_lbu(d, pc, regs, mem):
+    _write(regs, d.rd, _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 1))
+    return (pc + 4) & MASK
+
+
+def _h_lhu(d, pc, regs, mem):
+    _write(regs, d.rd, _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 2))
+    return (pc + 4) & MASK
+
+
+def _h_lwu(d, pc, regs, mem):
+    _write(regs, d.rd, _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 4))
+    return (pc + 4) & MASK
+
+
+def _h_sb(d, pc, regs, mem):
+    _write_bytes(mem, (regs[d.rs1] + d.imm) & MASK, regs[d.rs2], 1)
+    return (pc + 4) & MASK
+
+
+def _h_sh(d, pc, regs, mem):
+    _write_bytes(mem, (regs[d.rs1] + d.imm) & MASK, regs[d.rs2], 2)
+    return (pc + 4) & MASK
+
+
+def _h_sw(d, pc, regs, mem):
+    _write_bytes(mem, (regs[d.rs1] + d.imm) & MASK, regs[d.rs2], 4)
+    return (pc + 4) & MASK
+
+
+def _h_sd(d, pc, regs, mem):
+    _write_bytes(mem, (regs[d.rs1] + d.imm) & MASK, regs[d.rs2], 8)
+    return (pc + 4) & MASK
+
+
+# Misc
+def _h_fence(d, pc, regs, mem):
+    return (pc + 4) & MASK
+
+
+_STEP: dict[str, Callable[[Decoded, int, list[int], dict[int, int]], int]] = {
     "addi": _h_addi, "slti": _h_slti, "sltiu": _h_sltiu,
     "xori": _h_xori, "ori": _h_ori, "andi": _h_andi,
     "slli": _h_slli, "srli": _h_srli, "srai": _h_srai,
@@ -309,5 +402,8 @@ _STEP: dict[str, Callable[[Decoded, int, list[int]], int]] = {
     "beq": _h_beq, "bne": _h_bne, "blt": _h_blt,
     "bge": _h_bge, "bltu": _h_bltu, "bgeu": _h_bgeu,
     "lui": _h_lui, "auipc": _h_auipc, "jal": _h_jal, "jalr": _h_jalr,
+    "lb":  _h_lb,  "lh":  _h_lh,  "lw":  _h_lw,  "ld":  _h_ld,
+    "lbu": _h_lbu, "lhu": _h_lhu, "lwu": _h_lwu,
+    "sb":  _h_sb,  "sh":  _h_sh,  "sw":  _h_sw,  "sd":  _h_sd,
     "fence": _h_fence,
 }
