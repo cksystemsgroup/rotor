@@ -78,6 +78,39 @@ land in later milestones under the same external contract — see
 
 ---
 
+## Debugging and benchmarking with BTOR2 text
+
+The same BTOR2 that rotor emits to solvers can also be fed back in. Two
+subcommands expose this seam:
+
+```console
+$ rotor btor2-roundtrip model.btor2      # parse then re-emit (stdout)
+$ rotor solve-btor2 model.btor2 \        # race Z3BMC across several bounds
+    --bound 10 --bound 40 --bound 160
+verdict  : reachable
+bound    : 160
+step     : 100
+elapsed  : 42.1ms
+backend  : z3-bmc
+```
+
+`btor2-roundtrip` normalizes a model into rotor's canonical form (dense
+ids, `constd`-only constants, no trailing symbols) and surfaces parser
+diagnostics on stderr — useful for delta-debugging failing emissions
+and for ingesting HWMCC-style benchmarks whose surface syntax differs
+from what rotor emits.
+
+`solve-btor2` parses the file, hands the resulting `Model` to a
+`Portfolio` of `Z3BMC` entries (one per `--bound`), and races them. The
+race short-circuits on the first `reachable` and otherwise returns the
+deepest `unreachable`.
+
+This is a debugging and benchmarking seam, not a second input language:
+rotor still has no source-lift story for arbitrary BTOR2, because DWARF
+only exists for the binary. See PLAN.md's Non-goals section.
+
+---
+
 ## The architectural principle
 
 Rotor is organized around a single invariant:

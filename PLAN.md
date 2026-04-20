@@ -506,7 +506,13 @@ the architecture compose in either direction.
   engines better inputs, not to replace them.
 - A new input language. Rotor's input is the compiled binary plus a
   question; its output is a source-level answer. BTOR2 is the internal
-  currency.
+  currency. A BTOR2 parser ships alongside the emitter (`rotor/btor2/
+  parser.py`) and is wired into two CLI verbs — `rotor btor2-roundtrip`
+  for delta-debugging the emitter/parser pair, and `rotor solve-btor2`
+  for running rotor's portfolio against external BTOR2 benchmarks (e.g.
+  HWMCC). This is a debugging and benchmarking seam, not a second input
+  language: the binary + question pipeline remains the sole path to a
+  source-level answer, and the parser deliberately has no DWARF story.
 - Source-level reasoning. Rotor reasons about the binary and maps back
   via DWARF. Source-level tools are a consumer of rotor, not rotor
   itself.
