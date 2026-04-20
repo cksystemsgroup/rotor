@@ -27,6 +27,8 @@ bugs rather than masking them.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from rotor.binary import Function, RISCVBinary
 from rotor.btor2.nodes import ArraySort, Model, Node, Sort
 from rotor.btor2.riscv.decoder import decode
@@ -47,9 +49,18 @@ class UnsupportedInstruction(ValueError):
         self.word = word
 
 
-def build_reach(binary: RISCVBinary, spec: ReachSpec) -> Model:
+def build_reach(
+    binary: RISCVBinary,
+    spec: ReachSpec,
+    builder: Optional[Model] = None,
+) -> Model:
+    """Compile a ReachSpec into a BTOR2 Model.
+
+    `builder`, when provided, must be Model-compatible. IR layers pass a
+    hash-consing / simplifying subclass; L0 uses a plain Model.
+    """
     fn = binary.function(spec.function)
-    m = Model()
+    m = builder if builder is not None else Model()
 
     # Register file: x0 is a constant 0; x1..x31 are free initial states.
     zero = m.const(BV64, 0)

@@ -22,6 +22,7 @@ from rotor.binary import RISCVBinary
 from rotor.btor2.builder import build_reach
 from rotor.btor2.nodes import Model
 from rotor.btor2.printer import to_text
+from rotor.ir.dag import DagBuilder
 from rotor.ir.spec import QuestionSpec, ReachSpec
 
 
@@ -70,6 +71,33 @@ class IdentityEmitter:
     def emit(self, spec: QuestionSpec) -> Model:
         if isinstance(spec, ReachSpec):
             return build_reach(self._binary, spec)
+        raise TypeError(
+            f"{type(self).__name__} does not support spec type "
+            f"{type(spec).__name__}"
+        )
+
+
+class DagEmitter:
+    """L1 emitter: hash-consed BV expression DAG with local simplification.
+
+    Reuses the L0 builder by injecting a DagBuilder in place of the plain
+    Model. Every node goes through hash-consing and a small set of
+    auditable rewrites (constant folding, identity laws, ITE collapse,
+    extract-of-constant). The output remains a Model — printable,
+    solver-consumable, and equivalent to L0 on the full corpus.
+    """
+    name = "dag"
+
+    def __init__(self, binary: RISCVBinary) -> None:
+        self._binary = binary
+
+    @property
+    def binary(self) -> RISCVBinary:
+        return self._binary
+
+    def emit(self, spec: QuestionSpec) -> Model:
+        if isinstance(spec, ReachSpec):
+            return build_reach(self._binary, spec, builder=DagBuilder())
         raise TypeError(
             f"{type(self).__name__} does not support spec type "
             f"{type(spec).__name__}"

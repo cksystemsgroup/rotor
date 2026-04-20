@@ -10,12 +10,15 @@ M4 ships only the seam plus IdentityEmitter (L0). Future layers are
 added by implementing BTOR2Emitter against the same QuestionSpec.
 """
 
-from rotor.ir.emitter import BTOR2Emitter, IdentityEmitter, emit_btor2_bytes
+from rotor.ir.dag import DagBuilder
+from rotor.ir.emitter import BTOR2Emitter, DagEmitter, IdentityEmitter, emit_btor2_bytes
 from rotor.ir.spec import QuestionSpec, ReachSpec
 
 __all__ = [
     "BTOR2Emitter",
     "IdentityEmitter",
+    "DagEmitter",
+    "DagBuilder",
     "emit_btor2_bytes",
     "QuestionSpec",
     "ReachSpec",

@@ -17,7 +17,7 @@ from typing import Callable
 
 import pytest
 
-from rotor import EngineConfig, IdentityEmitter, RotorEngine
+from rotor import DagEmitter, EngineConfig, IdentityEmitter, RotorEngine
 from rotor.binary import RISCVBinary
 from rotor.ir.emitter import BTOR2Emitter
 from tests.equivalence.corpus import CORPUS, CorpusEntry
@@ -28,7 +28,8 @@ EmitterFactory = Callable[[RISCVBinary], BTOR2Emitter]
 
 EMITTERS: tuple[tuple[str, EmitterFactory], ...] = (
     ("identity", IdentityEmitter),
-    # L1/L2/L3 factories slot in here.
+    ("dag",      DagEmitter),
+    # L2/L3 factories slot in here.
 )
 
 
