@@ -39,6 +39,9 @@ def _line(node: Node, model: Model) -> str:
     if node.kind == "bad":
         (expr,) = node.operands
         return f"{node.id} bad {expr.id}"
+    if node.kind == "constraint":
+        (expr,) = node.operands
+        return f"{node.id} constraint {expr.id}"
 
     sort_id = model.sort_id_of(node.sort) if node.sort is not None else None
 

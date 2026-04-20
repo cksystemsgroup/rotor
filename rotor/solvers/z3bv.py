@@ -45,6 +45,7 @@ class Z3BMC:
         inits = [n for n in model.nodes if n.kind == "init"]
         nexts = [n for n in model.nodes if n.kind == "next"]
         bads = [n for n in model.nodes if n.kind == "bad"]
+        constraints = [n for n in model.nodes if n.kind == "constraint"]
 
         solver = z3.Solver(ctx=ctx)
         if timeout is not None:
@@ -81,6 +82,8 @@ class Z3BMC:
 
         step_flags: list[z3.BoolRef] = []
         for k, vals_k in enumerate(per_step_vals):
+            for c in constraints:
+                solver.add(vals_k[c.operands[0].id] == bv1)
             flag = z3.Bool(f"__bad@{k}", ctx=ctx)
             conds = [vals_k[b.operands[0].id] == bv1 for b in bads]
             solver.add(flag == (z3.Or(*conds) if len(conds) > 1 else conds[0]))
@@ -184,7 +187,7 @@ def _fold(
         elif n.kind == "write":
             array, addr, value = n.operands
             vals[n.id] = z3.Store(vals[array.id], vals[addr.id], vals[value.id])
-        elif n.kind in ("init", "next", "bad"):
+        elif n.kind in ("init", "next", "bad", "constraint"):
             continue
         else:
             raise AssertionError(f"_fold: unknown kind {n.kind!r}")

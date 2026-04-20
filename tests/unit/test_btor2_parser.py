@@ -245,3 +245,167 @@ def test_from_path(tmp_path: Path) -> None:
     r = from_path(f)
     assert r.ok
     assert len(r.model.nodes) == 2
+
+
+# ---------------------------------------------------------------- HWMCC extensions (Phase 3)
+
+
+def _const_values(r) -> list[int]:
+    return [n.operands[0] for n in r.model.nodes if n.kind == "const"]
+
+
+def test_zero_one_ones_normalize_to_constd() -> None:
+    src = (
+        "1 sort bitvec 4\n"
+        "2 zero 1\n"
+        "3 one 1\n"
+        "4 ones 1\n"
+    )
+    r = from_text(src)
+    assert r.ok
+    assert _const_values(r) == [0, 1, 15]
+    # Output always re-emits as constd.
+    text = to_text(r.model)
+    assert " zero " not in text and " one " not in text and " ones " not in text
+    assert text.count(" constd ") == 3
+
+
+def test_const_binary_and_consth_hex() -> None:
+    src = (
+        "1 sort bitvec 8\n"
+        "2 const 1 10101010\n"
+        "3 consth 1 ff\n"
+        "4 consth 1 0A\n"
+    )
+    r = from_text(src)
+    assert r.ok, r.diagnostics
+    assert _const_values(r) == [0b10101010, 0xFF, 0x0A]
+
+
+def test_const_rejects_non_binary() -> None:
+    r = from_text("1 sort bitvec 4\n2 const 1 123\n")
+    assert not r.ok
+    assert "base-2" in r.diagnostics[0].message
+
+
+def test_consth_rejects_non_hex() -> None:
+    r = from_text("1 sort bitvec 4\n2 consth 1 xyz\n")
+    assert not r.ok
+    assert "base-16" in r.diagnostics[0].message
+
+
+def test_constraint_emits_and_is_honoured_by_z3() -> None:
+    # A simple reachability: bad expr can be satisfied only if constraint
+    # permits it. With a contradictory constraint, the bad state must
+    # become unreachable at any bound.
+    from rotor.solvers.z3bv import Z3BMC
+
+    src = (
+        "1 sort bitvec 1\n"
+        "2 state 1 s\n"
+        "3 constd 1 0\n"
+        "4 init 1 2 3\n"
+        "5 next 1 2 2\n"            # s stays 0 forever
+        "6 constd 1 1\n"
+        "7 eq 1 2 6\n"              # s == 1 (impossible due to init+next)
+        "8 bad 7\n"
+    )
+    r = from_text(src)
+    assert r.ok, r.diagnostics
+    # Control case: unreachable already (init 0, next = self).
+    base = Z3BMC().check_reach(r.model, bound=5)
+    assert base.verdict == "unreachable"
+
+    # Add a constraint that is always false. The solver path must assert
+    # the constraint and still conclude unreachable (not crash).
+    src_with_c = src + "9 constd 1 0\n10 constraint 9\n11 bad 6\n"
+    r2 = from_text(src_with_c)
+    assert r2.ok, r2.diagnostics
+    res = Z3BMC().check_reach(r2.model, bound=3)
+    # Constraint is always false, so the whole path is infeasible ->
+    # no reachable bad, i.e. unreachable.
+    assert res.verdict == "unreachable"
+
+
+def test_output_justice_fair_are_warnings_not_errors() -> None:
+    src = (
+        "1 sort bitvec 8\n"
+        "2 constd 1 42\n"
+        "3 output 1 2\n"
+        "4 justice 1 2\n"
+        "5 fair 1 2\n"
+    )
+    r = from_text(src)
+    # No errors: warnings only.
+    assert r.ok
+    severities = [d.severity for d in r.diagnostics]
+    assert severities == ["warning", "warning", "warning"]
+    assert [d.line_no for d in r.diagnostics] == [3, 4, 5]
+    # The warned lines do not add nodes.
+    assert len([n for n in r.model.nodes if n.kind == "const"]) == 1
+
+
+def test_trailing_symbol_is_dropped_on_op_lines() -> None:
+    src = (
+        "1 sort bitvec 8\n"
+        "2 constd 1 3\n"
+        "3 constd 1 5\n"
+        "4 add 1 2 3 my_symbol\n"
+        "5 not 1 2 neg_const\n"
+    )
+    r = from_text(src)
+    assert r.ok, r.diagnostics
+    ops = [n for n in r.model.nodes if n.kind == "op"]
+    assert [o.opname for o in ops] == ["add", "not"]
+
+
+def test_trailing_symbol_on_constraint_and_bad() -> None:
+    src = (
+        "1 sort bitvec 1\n"
+        "2 state 1 s\n"
+        "3 constd 1 1\n"
+        "4 eq 1 2 3\n"
+        "5 bad 4 safety_label\n"
+        "6 constraint 4 invariant_label\n"
+    )
+    r = from_text(src)
+    assert r.ok, r.diagnostics
+    kinds = [n.kind for n in r.model.nodes]
+    assert "bad" in kinds and "constraint" in kinds
+
+
+def test_extended_op_set_arity_enforced() -> None:
+    # Unary must get exactly one operand; binary exactly two.
+    r1 = from_text("1 sort bitvec 8\n2 not 1\n")
+    assert not r1.ok
+    r2 = from_text("1 sort bitvec 8\n2 constd 1 3\n3 mul 1 2\n")
+    assert not r2.ok
+    # Happy path.
+    r3 = from_text(
+        "1 sort bitvec 8\n"
+        "2 constd 1 3\n"
+        "3 constd 1 5\n"
+        "4 mul 1 2 3\n"
+        "5 not 1 2\n"
+        "6 redand 1 2\n"          # width mismatch; Model doesn't validate -> accepted
+    )
+    assert r3.ok, r3.diagnostics
+
+
+def test_extended_ops_roundtrip_as_written() -> None:
+    """New op names survive round-trip: parsed, stored in Model.op, printed back."""
+    src = (
+        "1 sort bitvec 8\n"
+        "2 constd 1 1\n"
+        "3 constd 1 2\n"
+        "4 mul 1 2 3\n"
+        "5 udiv 1 2 3\n"
+        "6 ugte 1 2 3\n"
+        "7 rol 1 2 3\n"
+        "8 not 1 2\n"
+    )
+    r = from_text(src)
+    assert r.ok
+    text = to_text(r.model)
+    for op in ("mul", "udiv", "ugte", "rol", "not"):
+        assert f" {op} " in text

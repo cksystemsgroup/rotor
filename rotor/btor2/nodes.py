@@ -186,6 +186,11 @@ class Model:
         assert expr.sort == Sort(1)
         return self._emit("bad", None, (expr,))
 
+    def constraint(self, expr: Node) -> Node:
+        """Invariant assumption: `expr` must hold in every reachable state."""
+        assert expr.sort == Sort(1)
+        return self._emit("constraint", None, (expr,))
+
     # -- internals -----------------------------------------------------
 
     def _ext(self, kind: str, a: Node, extra: int) -> Node:

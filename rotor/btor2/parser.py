@@ -10,25 +10,23 @@ line that cannot be interpreted is skipped and recorded; the caller
 inspects `ParseResult.diagnostics` to decide whether the resulting Model
 is usable.
 
-Phase 1 supports exactly the subset produced by printer.to_text:
+Phase 1 supports exactly the subset produced by printer.to_text. Phase 3
+extends coverage to HWMCC benchmark files by accepting:
 
-    sort bitvec <w>
-    sort array <idx> <elt>
-    constd <sort> <value>
-    input <sort> <name>
-    state <sort> <name>
-    <opname> <sort> <args...>          opname in SUPPORTED_OPS
-    ite <sort> <c> <t> <e>
-    slice <sort> <a> <hi> <lo>
-    uext|sext <sort> <a> <n>
-    read <sort> <array> <addr>
-    write <sort> <array> <addr> <val>
-    init <sort> <state> <expr>
-    next <sort> <state> <expr>
-    bad <expr>
+    zero|one|ones <sort>                 — normalized to constd
+    const  <sort> <binary-string>        — normalized to constd
+    consth <sort> <hex-string>           — normalized to constd
+    constraint <expr>                    — invariant assumption (kept)
+    output <sort> <expr>                 — warning, ignored
+    justice <n> <expr>...                — warning, ignored
+    fair    <n> <expr>...                — warning, ignored
+    trailing symbol tokens on any line   — tolerated (silently dropped for
+                                           kinds rotor's Model does not
+                                           carry a name for)
 
-HWMCC constructs (zero/one/ones/const/consth, output/constraint/justice/
-fair, trailing symbol tokens on any line) are deferred to a later phase.
+The full HWMCC op set (unary, reductions, comparisons, arith, rotates,
+overflow predicates) is accepted; arity is checked but operand sort is
+not — operand-sort validation is the solver backend's job.
 """
 
 from __future__ import annotations
@@ -40,12 +38,31 @@ from typing import Union
 from rotor.btor2.nodes import AnySort, ArraySort, Model, Node, Sort
 
 
-SUPPORTED_OPS: frozenset[str] = frozenset({
-    "add", "sub", "and", "or", "xor",
-    "eq", "neq", "ult", "slt",
-    "sll", "srl", "sra",
+UNARY_OPS: frozenset[str] = frozenset({
+    "not", "neg", "inc", "dec",
+    "redand", "redor", "redxor",
+})
+
+BINARY_OPS: frozenset[str] = frozenset({
+    # bitwise
+    "and", "or", "xor", "nand", "nor", "xnor", "implies", "iff",
+    # arithmetic
+    "add", "sub", "mul",
+    "udiv", "sdiv", "urem", "srem", "smod",
+    # equality / comparison
+    "eq", "neq",
+    "ult", "ulte", "ugt", "ugte",
+    "slt", "slte", "sgt", "sgte",
+    # shifts / rotates
+    "sll", "srl", "sra", "rol", "ror",
+    # overflow predicates
+    "saddo", "uaddo", "ssubo", "usubo", "smulo", "umulo", "sdivo",
+    # concatenation
     "concat",
 })
+
+# Exposed for tests / introspection; kept as a union for convenience.
+SUPPORTED_OPS: frozenset[str] = UNARY_OPS | BINARY_OPS
 
 
 @dataclass(frozen=True)
@@ -111,6 +128,12 @@ class _Parser:
             self._parse_sort(ext_id, args)
         elif tag == "constd":
             self._parse_constd(ext_id, args)
+        elif tag in ("zero", "one", "ones"):
+            self._parse_const_shorthand(ext_id, tag, args)
+        elif tag == "const":
+            self._parse_const_radix(ext_id, args, base=2, label="const")
+        elif tag == "consth":
+            self._parse_const_radix(ext_id, args, base=16, label="consth")
         elif tag == "input":
             self._parse_input(ext_id, args)
         elif tag == "state":
@@ -131,8 +154,16 @@ class _Parser:
             self._parse_init_or_next(ext_id, "next", args)
         elif tag == "bad":
             self._parse_bad(ext_id, args)
-        elif tag in SUPPORTED_OPS:
-            self._parse_op(ext_id, tag, args)
+        elif tag == "constraint":
+            self._parse_constraint(ext_id, args)
+        elif tag == "output":
+            self._warn(line_no, "output: accepted but not tracked")
+        elif tag in ("justice", "fair"):
+            self._warn(line_no, f"{tag}: liveness / fairness ignored")
+        elif tag in UNARY_OPS:
+            self._parse_op_n(ext_id, tag, args, arity=1)
+        elif tag in BINARY_OPS:
+            self._parse_op_n(ext_id, tag, args, arity=2)
         else:
             raise _SkipLine(f"unsupported tag {tag!r}")
 
@@ -163,97 +194,118 @@ class _Parser:
             raise _SkipLine(f"unknown sort kind {kind!r}")
 
     def _parse_constd(self, ext_id: int, args: list[str]) -> None:
-        if len(args) != 2:
-            raise _SkipLine("constd requires <sort> <value>")
-        sort = self._bv_sort_ref(args[0])
-        value = self._int(args[1], "value")
+        positional, _ = self._split(args, 2, tag="constd")
+        sort = self._bv_sort_ref(positional[0])
+        value = self._int(positional[1], "value")
+        self.nodes[ext_id] = self.model.const(sort, value)
+
+    def _parse_const_shorthand(self, ext_id: int, tag: str, args: list[str]) -> None:
+        positional, _ = self._split(args, 1, tag=tag)
+        sort = self._bv_sort_ref(positional[0])
+        if tag == "zero":
+            value = 0
+        elif tag == "one":
+            value = 1
+        else:  # "ones"
+            value = (1 << sort.width) - 1
+        self.nodes[ext_id] = self.model.const(sort, value)
+
+    def _parse_const_radix(
+        self, ext_id: int, args: list[str], *, base: int, label: str
+    ) -> None:
+        positional, _ = self._split(args, 2, tag=label)
+        sort = self._bv_sort_ref(positional[0])
+        literal = positional[1]
+        try:
+            value = int(literal, base)
+        except ValueError:
+            raise _SkipLine(f"{label} literal {literal!r} is not base-{base}")
+        if value < 0:
+            raise _SkipLine(f"{label} literal {literal!r} is negative")
         self.nodes[ext_id] = self.model.const(sort, value)
 
     def _parse_input(self, ext_id: int, args: list[str]) -> None:
-        if not args:
+        if not args or len(args) > 2:
             raise _SkipLine("input requires <sort> [<name>]")
         sort = self._bv_sort_ref(args[0])
-        name = args[1] if len(args) >= 2 else f"input{ext_id}"
+        name = args[1] if len(args) == 2 else f"input{ext_id}"
         self.nodes[ext_id] = self.model.input(sort, name)
 
     def _parse_state(self, ext_id: int, args: list[str]) -> None:
-        if not args:
+        if not args or len(args) > 2:
             raise _SkipLine("state requires <sort> [<name>]")
         sort = self._sort_ref(args[0])
-        name = args[1] if len(args) >= 2 else f"state{ext_id}"
+        name = args[1] if len(args) == 2 else f"state{ext_id}"
         self.nodes[ext_id] = self.model.state(sort, name)
 
-    def _parse_op(self, ext_id: int, opname: str, args: list[str]) -> None:
-        if len(args) < 3:
-            raise _SkipLine(f"op {opname} requires <sort> <arg> <arg>")
-        sort = self._bv_sort_ref(args[0])
-        operands = tuple(self._node_ref(a) for a in args[1:])
+    def _parse_op_n(self, ext_id: int, opname: str, args: list[str], *, arity: int) -> None:
+        positional, _ = self._split(args, 1 + arity, tag=opname)
+        sort = self._bv_sort_ref(positional[0])
+        operands = tuple(self._node_ref(a) for a in positional[1:])
         self.nodes[ext_id] = self.model.op(opname, sort, *operands)
 
     def _parse_ite(self, ext_id: int, args: list[str]) -> None:
-        if len(args) != 4:
-            raise _SkipLine("ite requires <sort> <cond> <then> <else>")
-        sort = self._sort_ref(args[0])
-        cond = self._node_ref(args[1])
-        t = self._node_ref(args[2])
-        e = self._node_ref(args[3])
+        positional, _ = self._split(args, 4, tag="ite")
+        sort = self._sort_ref(positional[0])
+        cond = self._node_ref(positional[1])
+        t = self._node_ref(positional[2])
+        e = self._node_ref(positional[3])
         if t.sort != sort or e.sort != sort:
             raise _SkipLine("ite branch sorts do not match declared sort")
         self.nodes[ext_id] = self.model.ite(cond, t, e)
 
     def _parse_slice(self, ext_id: int, args: list[str]) -> None:
-        if len(args) != 4:
-            raise _SkipLine("slice requires <sort> <arg> <hi> <lo>")
-        self._bv_sort_ref(args[0])
-        a = self._node_ref(args[1])
-        hi = self._int(args[2], "hi")
-        lo = self._int(args[3], "lo")
+        positional, _ = self._split(args, 4, tag="slice")
+        self._bv_sort_ref(positional[0])
+        a = self._node_ref(positional[1])
+        hi = self._int(positional[2], "hi")
+        lo = self._int(positional[3], "lo")
         self.nodes[ext_id] = self.model.slice(a, hi, lo)
 
     def _parse_ext(self, ext_id: int, which: str, args: list[str]) -> None:
-        if len(args) != 3:
-            raise _SkipLine(f"{which} requires <sort> <arg> <extra>")
-        self._bv_sort_ref(args[0])
-        a = self._node_ref(args[1])
-        extra = self._int(args[2], "extra")
+        positional, _ = self._split(args, 3, tag=which)
+        self._bv_sort_ref(positional[0])
+        a = self._node_ref(positional[1])
+        extra = self._int(positional[2], "extra")
         if which == "uext":
             self.nodes[ext_id] = self.model.uext(a, extra)
         else:
             self.nodes[ext_id] = self.model.sext(a, extra)
 
     def _parse_read(self, ext_id: int, args: list[str]) -> None:
-        if len(args) != 3:
-            raise _SkipLine("read requires <elt_sort> <array> <addr>")
-        self._bv_sort_ref(args[0])
-        array = self._node_ref(args[1])
-        addr = self._node_ref(args[2])
+        positional, _ = self._split(args, 3, tag="read")
+        self._bv_sort_ref(positional[0])
+        array = self._node_ref(positional[1])
+        addr = self._node_ref(positional[2])
         self.nodes[ext_id] = self.model.read(array, addr)
 
     def _parse_write(self, ext_id: int, args: list[str]) -> None:
-        if len(args) != 4:
-            raise _SkipLine("write requires <array_sort> <array> <addr> <val>")
-        self._sort_ref(args[0])
-        array = self._node_ref(args[1])
-        addr = self._node_ref(args[2])
-        val = self._node_ref(args[3])
+        positional, _ = self._split(args, 4, tag="write")
+        self._sort_ref(positional[0])
+        array = self._node_ref(positional[1])
+        addr = self._node_ref(positional[2])
+        val = self._node_ref(positional[3])
         self.nodes[ext_id] = self.model.write(array, addr, val)
 
     def _parse_init_or_next(self, ext_id: int, kind: str, args: list[str]) -> None:
-        if len(args) != 3:
-            raise _SkipLine(f"{kind} requires <sort> <state> <expr>")
-        self._sort_ref(args[0])
-        state = self._node_ref(args[1])
-        expr = self._node_ref(args[2])
+        positional, _ = self._split(args, 3, tag=kind)
+        self._sort_ref(positional[0])
+        state = self._node_ref(positional[1])
+        expr = self._node_ref(positional[2])
         if kind == "init":
             self.nodes[ext_id] = self.model.init(state, expr)
         else:
             self.nodes[ext_id] = self.model.next(state, expr)
 
     def _parse_bad(self, ext_id: int, args: list[str]) -> None:
-        if len(args) != 1:
-            raise _SkipLine("bad requires <expr>")
-        expr = self._node_ref(args[0])
+        positional, _ = self._split(args, 1, tag="bad")
+        expr = self._node_ref(positional[0])
         self.nodes[ext_id] = self.model.bad(expr)
+
+    def _parse_constraint(self, ext_id: int, args: list[str]) -> None:
+        positional, _ = self._split(args, 1, tag="constraint")
+        expr = self._node_ref(positional[0])
+        self.nodes[ext_id] = self.model.constraint(expr)
 
     # -- helpers -------------------------------------------------------
 
@@ -285,3 +337,18 @@ class _Parser:
 
     def _err(self, line_no: int, message: str) -> None:
         self.diagnostics.append(Diagnostic(line_no=line_no, severity="error", message=message))
+
+    def _warn(self, line_no: int, message: str) -> None:
+        self.diagnostics.append(Diagnostic(line_no=line_no, severity="warning", message=message))
+
+    def _split(self, args: list[str], n: int, *, tag: str) -> tuple[list[str], str | None]:
+        """Split `args` into `n` required positional tokens plus an optional
+        trailing symbol. BTOR2 allows any node line to carry a symbol after
+        its operands — rotor's Model has no storage for symbols on most
+        kinds, so they are tolerated and silently dropped."""
+        if len(args) < n:
+            raise _SkipLine(f"{tag} requires {n} arg(s), got {len(args)}")
+        if len(args) > n + 1:
+            raise _SkipLine(f"{tag} takes {n} arg(s) plus optional symbol, got {len(args)}")
+        symbol = args[n] if len(args) == n + 1 else None
+        return args[:n], symbol
