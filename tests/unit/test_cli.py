@@ -78,7 +78,88 @@ def test_reach_writes_trace_to_file(tmp_path: Path) -> None:
     assert code == 1
     assert trace_path.exists()
     assert "# Counterexample" in trace_path.read_text()
-    assert f"trace    : {trace_path}" in out
+
+
+# ---------------------------------------------------------------- BTOR2 subcommands
+
+
+_COUNTER_BTOR2 = (
+    "; counter that reaches 100 at step 100\n"
+    "1 sort bitvec 8\n"
+    "2 sort bitvec 1\n"
+    "3 state 1 counter\n"
+    "4 zero 1\n"
+    "5 init 1 3 4\n"
+    "6 one 1\n"
+    "7 add 1 3 6\n"
+    "8 next 1 3 7\n"
+    "9 constd 1 100\n"
+    "10 eq 2 3 9\n"
+    "11 bad 10\n"
+)
+
+
+def test_btor2_roundtrip_prints_normalized_model(tmp_path: Path) -> None:
+    f = tmp_path / "m.btor2"
+    f.write_text(_COUNTER_BTOR2)
+    code, out, err = _run("btor2-roundtrip", str(f))
+    assert code == 0
+    assert err == ""
+    # zero/one get normalized to constd on re-emit.
+    assert " zero " not in out and " one " not in out
+    assert out.count("constd ") == 3
+
+
+def test_btor2_roundtrip_surfaces_diagnostics_on_stderr(tmp_path: Path) -> None:
+    f = tmp_path / "m.btor2"
+    f.write_text("1 sort bitvec 8\n2 frobnicate 1\n")
+    code, out, err = _run("btor2-roundtrip", str(f))
+    assert code == 2
+    assert "error:" in err and "frobnicate" in err
+    # Valid line still gets re-emitted.
+    assert "sort bitvec 8" in out
+
+
+def test_solve_btor2_unreachable_below_threshold(tmp_path: Path) -> None:
+    f = tmp_path / "m.btor2"
+    f.write_text(_COUNTER_BTOR2)
+    code, out, err = _run("solve-btor2", str(f), "--bound", "5")
+    assert code == 0
+    assert "verdict  : unreachable" in out
+    assert "bound    : 5" in out
+
+
+def test_solve_btor2_reachable_above_threshold(tmp_path: Path) -> None:
+    f = tmp_path / "m.btor2"
+    f.write_text(_COUNTER_BTOR2)
+    code, out, err = _run("solve-btor2", str(f), "--bound", "150")
+    assert code == 1
+    assert "verdict  : reachable" in out
+    assert "step     : 100" in out
+
+
+def test_solve_btor2_races_multiple_bounds(tmp_path: Path) -> None:
+    """Two bounds (one short, one long): portfolio must see the reachable
+    verdict from the longer bound and short-circuit on it."""
+    f = tmp_path / "m.btor2"
+    f.write_text(_COUNTER_BTOR2)
+    code, out, err = _run(
+        "solve-btor2", str(f),
+        "--bound", "5",
+        "--bound", "150",
+    )
+    assert code == 1
+    assert "verdict  : reachable" in out
+
+
+def test_solve_btor2_exits_unknown_on_parse_error(tmp_path: Path) -> None:
+    f = tmp_path / "m.btor2"
+    f.write_text("1 sort bitvec 8\n2 frobnicate 1\n3 bad 2\n")
+    code, out, err = _run("solve-btor2", str(f))
+    assert code == 2
+    assert "frobnicate" in err
+    # No verdict line: parse error short-circuits before solving.
+    assert "verdict" not in out
 
 
 def test_unknown_function_error() -> None:

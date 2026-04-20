@@ -46,6 +46,7 @@ class Z3BMC:
         nexts = [n for n in model.nodes if n.kind == "next"]
         bads = [n for n in model.nodes if n.kind == "bad"]
         constraints = [n for n in model.nodes if n.kind == "constraint"]
+        inputs = [n for n in model.nodes if n.kind == "input"]
 
         solver = z3.Solver(ctx=ctx)
         if timeout is not None:
@@ -61,7 +62,8 @@ class Z3BMC:
             sym = _fresh_state(st, 0, ctx)
             state_vals_0[st.id] = sym
             initial_state_syms[st.id] = sym
-        vals_0 = _fold(model, state_vals_0, const_cache, ctx, bv0, bv1)
+        input_vals_0 = _fresh_inputs(inputs, 0, ctx)
+        vals_0 = _fold(model, state_vals_0, input_vals_0, const_cache, ctx, bv0, bv1)
         per_step_vals.append(vals_0)
         for init in inits:
             state, expr = init.operands
@@ -73,7 +75,8 @@ class Z3BMC:
             state_vals_k: dict[int, z3.ExprRef] = {}
             for st in states:
                 state_vals_k[st.id] = _fresh_state(st, k, ctx)
-            vals_k = _fold(model, state_vals_k, const_cache, ctx, bv0, bv1)
+            input_vals_k = _fresh_inputs(inputs, k, ctx)
+            vals_k = _fold(model, state_vals_k, input_vals_k, const_cache, ctx, bv0, bv1)
             for nxt in nexts:
                 state, expr = nxt.operands
                 solver.add(state_vals_k[state.id] == prev_vals[expr.id])
@@ -146,9 +149,21 @@ def _fresh_state(state: Node, k: int, ctx: z3.Context) -> z3.ExprRef:
     return z3.BitVec(name, sort.width, ctx=ctx)
 
 
+def _fresh_inputs(
+    inputs: list[Node], k: int, ctx: z3.Context
+) -> dict[int, z3.ExprRef]:
+    """Fresh per-step variables for each BTOR2 `input` node."""
+    vals: dict[int, z3.ExprRef] = {}
+    for n in inputs:
+        assert isinstance(n.sort, Sort), "input nodes are bitvec-sorted"
+        vals[n.id] = z3.BitVec(f"{n.name}@{k}", n.sort.width, ctx=ctx)
+    return vals
+
+
 def _fold(
     model: Model,
     state_vals: dict[int, z3.ExprRef],
+    input_vals: dict[int, z3.ExprRef],
     const_cache: dict[int, z3.BitVecRef],
     ctx: z3.Context,
     bv0: z3.BitVecRef,
@@ -166,7 +181,7 @@ def _fold(
         elif n.kind == "state":
             vals[n.id] = state_vals[n.id]
         elif n.kind == "input":
-            raise NotImplementedError("input nodes not supported by M1/M2 backend")
+            vals[n.id] = input_vals[n.id]
         elif n.kind == "op":
             vals[n.id] = _apply_op(n.opname, [vals[o.id] for o in n.operands], bv0, bv1)
         elif n.kind == "ite":

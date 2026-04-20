@@ -6,6 +6,12 @@ Subcommands map 1:1 to API verbs:
     rotor disasm <elf> --function <name>    (RISC-V disassembly)
     rotor reach  <elf> --function <name> --target <pc> [--bound N] [--trace FILE]
 
+Plus two utilities that operate on BTOR2 text directly (debugging and
+benchmarking seam; rotor's compile pipeline is unchanged):
+
+    rotor btor2-roundtrip <file.btor2>      (parse then re-emit)
+    rotor solve-btor2     <file.btor2> [--bound N]... [--timeout T]
+
 Exit codes follow the PLAN convention:
 
     0    safe / proved / equivalent   (e.g. reach returned `unreachable`)
@@ -25,9 +31,13 @@ from typing import Optional, Sequence, TextIO
 
 from rotor.api import RotorAPI
 from rotor.binary import Function, RISCVBinary
+from rotor.btor2.parser import Diagnostic, ParseResult, from_path as parse_btor2_file
+from rotor.btor2.printer import to_text as btor2_to_text
 from rotor.btor2.riscv.decoder import decode
 from rotor.dwarf import DwarfLineMap
 from rotor.riscv.disasm import disasm
+from rotor.solvers.portfolio import Portfolio
+from rotor.solvers.z3bv import Z3BMC
 
 EXIT_OK = 0
 EXIT_FOUND = 1
@@ -67,6 +77,28 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Write counterexample markdown to this path "
                          "instead of stderr.")
     rc.set_defaults(func=cmd_reach)
+
+    rt = sub.add_parser(
+        "btor2-roundtrip",
+        help="Parse a BTOR2 file and re-emit it (diagnostics on stderr).",
+    )
+    rt.add_argument("file", type=Path)
+    rt.set_defaults(func=cmd_btor2_roundtrip)
+
+    sb = sub.add_parser(
+        "solve-btor2",
+        help="Solve the reachability (bad states) of a BTOR2 file via rotor's portfolio.",
+    )
+    sb.add_argument("file", type=Path)
+    sb.add_argument(
+        "--bound", type=int, action="append",
+        help="BMC unroll bound; repeat to race multiple bounds (default: 20).",
+    )
+    sb.add_argument(
+        "--timeout", type=float, default=None,
+        help="Per-entry solver timeout in seconds (default: none).",
+    )
+    sb.set_defaults(func=cmd_solve_btor2)
 
     return p
 
@@ -154,6 +186,59 @@ def cmd_reach(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
     if r.verdict == "unreachable":
         return EXIT_OK
     return EXIT_UNKNOWN
+
+
+def cmd_btor2_roundtrip(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
+    """Parse a BTOR2 file and re-emit it, surfacing diagnostics on stderr.
+
+    Useful for delta-debugging the parser / emitter pair and for
+    normalizing benchmark files into rotor's canonical (dense-id,
+    constd-only) form.
+    """
+    r = parse_btor2_file(args.file)
+    _print_diagnostics(r, err)
+    out.write(btor2_to_text(r.model))
+    return EXIT_OK if r.ok else EXIT_UNKNOWN
+
+
+def cmd_solve_btor2(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
+    """Solve a BTOR2 file's reachability via the Z3BMC portfolio.
+
+    The default is a single entry at bound 20 (mirroring `rotor reach`).
+    Passing `--bound` multiple times builds a race across those bounds;
+    the portfolio short-circuits on the first `reachable` verdict and
+    otherwise returns the deepest `unreachable`.
+    """
+    r = parse_btor2_file(args.file)
+    _print_diagnostics(r, err)
+    if not r.ok:
+        return EXIT_UNKNOWN
+
+    bounds = args.bound or [20]
+    portfolio = Portfolio()
+    for b in bounds:
+        portfolio.add(Z3BMC(), bound=b, timeout=args.timeout)
+    result = portfolio.check_reach(r.model)
+
+    print(f"verdict  : {result.verdict}", file=out)
+    print(f"bound    : {result.bound}", file=out)
+    if result.step is not None:
+        print(f"step     : {result.step}", file=out)
+    print(f"elapsed  : {result.elapsed * 1000:.1f}ms", file=out)
+    print(f"backend  : {result.backend}", file=out)
+    if result.reason is not None:
+        print(f"reason   : {result.reason}", file=out)
+
+    if result.verdict == "reachable":
+        return EXIT_FOUND
+    if result.verdict == "unreachable":
+        return EXIT_OK
+    return EXIT_UNKNOWN
+
+
+def _print_diagnostics(r: ParseResult, err: TextIO) -> None:
+    for d in r.diagnostics:
+        print(f"{d.severity}: line {d.line_no}: {d.message}", file=err)
 
 
 def _parse_int(s: str) -> int:
