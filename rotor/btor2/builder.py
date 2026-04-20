@@ -56,7 +56,7 @@ def build_reach(binary: RISCVBinary, spec: ReachSpec) -> Model:
         d = decode(inst.word)
         if d is None:
             raise UnsupportedInstruction(inst.pc, inst.word)
-        writes, npc = lower(d, inst.pc, m, regs, pc)
+        writes, npc = lower(d, inst.pc, m, regs)
         pc_const = m.const(BV64, inst.pc)
         here = m.op("eq", BV1, pc, pc_const)
         next_pc = m.ite(here, npc, next_pc)

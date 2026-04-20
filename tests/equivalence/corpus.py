@@ -27,16 +27,25 @@ class CorpusEntry:
     expected_step: Optional[int]
 
 
-FIXTURE = "tests/fixtures/add2.elf"
+ADD2 = "tests/fixtures/add2.elf"
+BRANCHES = "tests/fixtures/branches.elf"
 
 CORPUS: tuple[CorpusEntry, ...] = (
-    CorpusEntry("add2-entry-trivial",        FIXTURE, "add2", 0x00, 0, "reachable",   0),
-    CorpusEntry("add2-ret-one-step",         FIXTURE, "add2", 0x04, 1, "reachable",   1),
-    CorpusEntry("add2-unreach-within-bound", FIXTURE, "add2", 0x08, 1, "unreachable", None),
+    # add2.elf — straight-line + simple conditional fixture (M1)
+    CorpusEntry("add2-entry-trivial",        ADD2, "add2", 0x00, 0, "reachable",   0),
+    CorpusEntry("add2-ret-one-step",         ADD2, "add2", 0x04, 1, "reachable",   1),
+    CorpusEntry("add2-unreach-within-bound", ADD2, "add2", 0x08, 1, "unreachable", None),
 
-    CorpusEntry("sign-entry-trivial",        FIXTURE, "sign", 0x00, 0, "reachable",   0),
-    CorpusEntry("sign-li-branch",            FIXTURE, "sign", 0x10, 2, "reachable",   1),
-    CorpusEntry("sign-ret2-via-positive",    FIXTURE, "sign", 0x14, 2, "reachable",   2),
-    CorpusEntry("sign-ret1-via-negative",    FIXTURE, "sign", 0x0C, 3, "reachable",   3),
-    CorpusEntry("sign-unreach-within-bound", FIXTURE, "sign", 0x04, 0, "unreachable", None),
+    CorpusEntry("sign-entry-trivial",        ADD2, "sign", 0x00, 0, "reachable",   0),
+    CorpusEntry("sign-li-branch",            ADD2, "sign", 0x10, 2, "reachable",   1),
+    CorpusEntry("sign-ret2-via-positive",    ADD2, "sign", 0x14, 2, "reachable",   2),
+    CorpusEntry("sign-ret1-via-negative",    ADD2, "sign", 0x0C, 3, "reachable",   3),
+    CorpusEntry("sign-unreach-within-bound", ADD2, "sign", 0x04, 0, "unreachable", None),
+
+    # branches.elf — exercises beq / bge / bltu / ori / li / mv / jal / ret (M5)
+    CorpusEntry("branches-entry-trivial",    BRANCHES, "branches", 0x00, 0, "reachable",   0),
+    CorpusEntry("branches-after-mv-and-li",  BRANCHES, "branches", 0x08, 2, "reachable",   2),
+    CorpusEntry("branches-ret-reachable",    BRANCHES, "branches", 0x20, 7, "reachable",   7),
+    CorpusEntry("branches-jal-reachable",    BRANCHES, "branches", 0x28, 6, "reachable",   6),
+    CorpusEntry("branches-c4-unreach-at-2",  BRANCHES, "branches", 0x14, 2, "unreachable", None),
 )

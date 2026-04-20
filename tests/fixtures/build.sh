@@ -21,3 +21,6 @@ FLAGS=(
 
 "$CC" "${FLAGS[@]}" -o add2.elf add2.c
 echo "built: add2.elf"
+
+"$CC" "${FLAGS[@]/--entry=add2/--entry=branches}" -o branches.elf branches.c
+echo "built: branches.elf"

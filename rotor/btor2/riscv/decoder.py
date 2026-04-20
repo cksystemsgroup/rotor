@@ -1,16 +1,27 @@
 """Decode a 32-bit RISC-V instruction word into a tagged record.
 
-M1 supports a minimal subset of RV64I sufficient for the add2.elf fixture:
+M5 covers the full RV64I base instruction set:
 
-    addi    I-type   OP-IMM   funct3=000
-    addw    R-type   OP-32    funct3=000  funct7=0000000
-    sub     R-type   OP       funct3=000  funct7=0100000
-    sltu    R-type   OP       funct3=011  funct7=0000000
-    blt     B-type   BRANCH   funct3=100
-    jalr    I-type   JALR     funct3=000
+    OP-IMM      addi  slti  sltiu  xori  ori  andi  slli  srli  srai
+    OP-IMM-32   addiw  slliw  srliw  sraiw
+    OP          add   sub   sll   slt   sltu  xor   srl   sra   or   and
+    OP-32       addw  subw  sllw  srlw  sraw
+    BRANCH      beq  bne  blt  bge  bltu  bgeu
+    LUI                                                                 (U)
+    AUIPC                                                                (U)
+    JAL                                                                  (J)
+    JALR                                                                 (I)
+    MISC-MEM    fence                                          (no-op)
 
-decode() returns None for any opcode outside the subset; callers treat
-that as an unsupported-instruction error.
+Loads / stores (LOAD, STORE) and SYSTEM (ecall, ebreak) are out of
+scope for M5; they belong to Phase 9 (memory) and Phase F (syscalls)
+respectively.
+
+Compressed (RVC) instructions are not handled — fixtures must compile
+with -march=rv64im (no `c`) so the stream is pure 32-bit.
+
+decode() returns None for any opcode outside the supported subset;
+callers treat that as an unsupported-instruction error.
 """
 
 from __future__ import annotations
@@ -18,56 +29,217 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+# Opcodes (low 7 bits of the instruction word).
+_OP_IMM       = 0b0010011
+_OP_IMM_32    = 0b0011011
+_OP           = 0b0110011
+_OP_32        = 0b0111011
+_BRANCH       = 0b1100011
+_LUI          = 0b0110111
+_AUIPC        = 0b0010111
+_JAL          = 0b1101111
+_JALR         = 0b1100111
+_MISC_MEM     = 0b0001111
+
 
 @dataclass(frozen=True)
 class Decoded:
-    mnem: str          # "addi", "addw", "sub", "sltu", "blt", "jalr"
-    rd: int            # 0..31
+    mnem: str
+    rd: int                # 0..31
     rs1: int
-    rs2: int           # unused for I-type; kept for shape uniformity
-    imm: int           # sign-extended
+    rs2: int               # unused for I/U/J types — kept for shape uniformity
+    imm: int               # sign-extended where applicable; shamt for shifts
 
+
+# ---------------------------------------------------------------------------
+# Top-level dispatch.
+# ---------------------------------------------------------------------------
 
 def decode(word: int) -> Optional[Decoded]:
     opcode = word & 0x7F
-    rd = (word >> 7) & 0x1F
-    funct3 = (word >> 12) & 0x7
-    rs1 = (word >> 15) & 0x1F
-    rs2 = (word >> 20) & 0x1F
-    funct7 = (word >> 25) & 0x7F
+    decoder = _OPCODE_TABLE.get(opcode)
+    if decoder is None:
+        return None
+    return decoder(word)
 
-    if opcode == 0b0010011 and funct3 == 0b000:
-        # addi rd, rs1, imm
-        return Decoded("addi", rd, rs1, 0, _sext(_bits(word, 31, 20), 12))
 
-    if opcode == 0b0111011 and funct3 == 0b000 and funct7 == 0b0000000:
-        # addw rd, rs1, rs2
-        return Decoded("addw", rd, rs1, rs2, 0)
+# ---------------------------------------------------------------------------
+# Per-format decoders.
+# ---------------------------------------------------------------------------
 
-    if opcode == 0b0110011 and funct3 == 0b000 and funct7 == 0b0100000:
-        # sub rd, rs1, rs2
-        return Decoded("sub", rd, rs1, rs2, 0)
+def _decode_op_imm(word: int) -> Optional[Decoded]:
+    rd, funct3, rs1 = _rd(word), _funct3(word), _rs1(word)
+    imm = _sext(_bits(word, 31, 20), 12)
 
-    if opcode == 0b0110011 and funct3 == 0b011 and funct7 == 0b0000000:
-        # sltu rd, rs1, rs2
-        return Decoded("sltu", rd, rs1, rs2, 0)
+    if funct3 == 0b000:
+        return Decoded("addi", rd, rs1, 0, imm)
+    if funct3 == 0b010:
+        return Decoded("slti", rd, rs1, 0, imm)
+    if funct3 == 0b011:
+        return Decoded("sltiu", rd, rs1, 0, imm)
+    if funct3 == 0b100:
+        return Decoded("xori", rd, rs1, 0, imm)
+    if funct3 == 0b110:
+        return Decoded("ori", rd, rs1, 0, imm)
+    if funct3 == 0b111:
+        return Decoded("andi", rd, rs1, 0, imm)
 
-    if opcode == 0b1100011 and funct3 == 0b100:
-        # blt rs1, rs2, offset
-        imm = (
-            (_bit(word, 31) << 12)
-            | (_bit(word, 7) << 11)
-            | (_bits(word, 30, 25) << 5)
-            | (_bits(word, 11, 8) << 1)
-        )
-        return Decoded("blt", 0, rs1, rs2, _sext(imm, 13))
-
-    if opcode == 0b1100111 and funct3 == 0b000:
-        # jalr rd, offset(rs1)
-        return Decoded("jalr", rd, rs1, 0, _sext(_bits(word, 31, 20), 12))
-
+    # Shifts: shamt is bits 25:20 (RV64), funct6 is bits 31:26.
+    if funct3 == 0b001:
+        if _bits(word, 31, 26) == 0:
+            return Decoded("slli", rd, rs1, 0, _bits(word, 25, 20))
+        return None
+    if funct3 == 0b101:
+        funct6 = _bits(word, 31, 26)
+        shamt = _bits(word, 25, 20)
+        if funct6 == 0b000000:
+            return Decoded("srli", rd, rs1, 0, shamt)
+        if funct6 == 0b010000:
+            return Decoded("srai", rd, rs1, 0, shamt)
+        return None
     return None
 
+
+def _decode_op_imm_32(word: int) -> Optional[Decoded]:
+    rd, funct3, rs1 = _rd(word), _funct3(word), _rs1(word)
+    imm = _sext(_bits(word, 31, 20), 12)
+
+    if funct3 == 0b000:
+        return Decoded("addiw", rd, rs1, 0, imm)
+    # 32-bit shifts: shamt is bits 24:20 (5 bits); bits 31:25 are funct7.
+    if funct3 == 0b001:
+        if _bits(word, 31, 25) == 0:
+            return Decoded("slliw", rd, rs1, 0, _bits(word, 24, 20))
+        return None
+    if funct3 == 0b101:
+        funct7 = _bits(word, 31, 25)
+        shamt = _bits(word, 24, 20)
+        if funct7 == 0b0000000:
+            return Decoded("srliw", rd, rs1, 0, shamt)
+        if funct7 == 0b0100000:
+            return Decoded("sraiw", rd, rs1, 0, shamt)
+        return None
+    return None
+
+
+def _decode_op(word: int) -> Optional[Decoded]:
+    rd, funct3, rs1, rs2 = _rd(word), _funct3(word), _rs1(word), _rs2(word)
+    funct7 = _funct7(word)
+
+    if funct7 == 0b0000000:
+        m = {
+            0b000: "add",
+            0b001: "sll",
+            0b010: "slt",
+            0b011: "sltu",
+            0b100: "xor",
+            0b101: "srl",
+            0b110: "or",
+            0b111: "and",
+        }.get(funct3)
+        return Decoded(m, rd, rs1, rs2, 0) if m else None
+    if funct7 == 0b0100000:
+        if funct3 == 0b000:
+            return Decoded("sub", rd, rs1, rs2, 0)
+        if funct3 == 0b101:
+            return Decoded("sra", rd, rs1, rs2, 0)
+        return None
+    return None
+
+
+def _decode_op_32(word: int) -> Optional[Decoded]:
+    rd, funct3, rs1, rs2 = _rd(word), _funct3(word), _rs1(word), _rs2(word)
+    funct7 = _funct7(word)
+
+    if funct7 == 0b0000000:
+        m = {0b000: "addw", 0b001: "sllw", 0b101: "srlw"}.get(funct3)
+        return Decoded(m, rd, rs1, rs2, 0) if m else None
+    if funct7 == 0b0100000:
+        if funct3 == 0b000:
+            return Decoded("subw", rd, rs1, rs2, 0)
+        if funct3 == 0b101:
+            return Decoded("sraw", rd, rs1, rs2, 0)
+    return None
+
+
+def _decode_branch(word: int) -> Optional[Decoded]:
+    funct3, rs1, rs2 = _funct3(word), _rs1(word), _rs2(word)
+    imm = (
+        (_bit(word, 31) << 12)
+        | (_bit(word, 7) << 11)
+        | (_bits(word, 30, 25) << 5)
+        | (_bits(word, 11, 8) << 1)
+    )
+    imm = _sext(imm, 13)
+    m = {
+        0b000: "beq",
+        0b001: "bne",
+        0b100: "blt",
+        0b101: "bge",
+        0b110: "bltu",
+        0b111: "bgeu",
+    }.get(funct3)
+    if m is None:
+        return None
+    return Decoded(m, 0, rs1, rs2, imm)
+
+
+def _decode_lui(word: int) -> Optional[Decoded]:
+    rd = _rd(word)
+    imm = _sext(_bits(word, 31, 12) << 12, 32)         # 32-bit then sext to 64 in lower
+    return Decoded("lui", rd, 0, 0, imm)
+
+
+def _decode_auipc(word: int) -> Optional[Decoded]:
+    rd = _rd(word)
+    imm = _sext(_bits(word, 31, 12) << 12, 32)
+    return Decoded("auipc", rd, 0, 0, imm)
+
+
+def _decode_jal(word: int) -> Optional[Decoded]:
+    rd = _rd(word)
+    imm = (
+        (_bit(word, 31) << 20)
+        | (_bits(word, 19, 12) << 12)
+        | (_bit(word, 20) << 11)
+        | (_bits(word, 30, 21) << 1)
+    )
+    imm = _sext(imm, 21)
+    return Decoded("jal", rd, 0, 0, imm)
+
+
+def _decode_jalr(word: int) -> Optional[Decoded]:
+    if _funct3(word) != 0b000:
+        return None
+    rd, rs1 = _rd(word), _rs1(word)
+    imm = _sext(_bits(word, 31, 20), 12)
+    return Decoded("jalr", rd, rs1, 0, imm)
+
+
+def _decode_misc_mem(word: int) -> Optional[Decoded]:
+    # FENCE / FENCE.I — modeled as a no-op.
+    if _funct3(word) in (0b000, 0b001):
+        return Decoded("fence", 0, 0, 0, 0)
+    return None
+
+
+_OPCODE_TABLE = {
+    _OP_IMM:    _decode_op_imm,
+    _OP_IMM_32: _decode_op_imm_32,
+    _OP:        _decode_op,
+    _OP_32:     _decode_op_32,
+    _BRANCH:    _decode_branch,
+    _LUI:       _decode_lui,
+    _AUIPC:     _decode_auipc,
+    _JAL:       _decode_jal,
+    _JALR:      _decode_jalr,
+    _MISC_MEM:  _decode_misc_mem,
+}
+
+
+# ---------------------------------------------------------------------------
+# Bit helpers.
+# ---------------------------------------------------------------------------
 
 def _bits(word: int, hi: int, lo: int) -> int:
     return (word >> lo) & ((1 << (hi - lo + 1)) - 1)
@@ -75,6 +247,13 @@ def _bits(word: int, hi: int, lo: int) -> int:
 
 def _bit(word: int, n: int) -> int:
     return (word >> n) & 1
+
+
+def _rd(w: int) -> int:     return _bits(w, 11, 7)
+def _funct3(w: int) -> int: return _bits(w, 14, 12)
+def _rs1(w: int) -> int:    return _bits(w, 19, 15)
+def _rs2(w: int) -> int:    return _bits(w, 24, 20)
+def _funct7(w: int) -> int: return _bits(w, 31, 25)
 
 
 def _sext(value: int, width: int) -> int:

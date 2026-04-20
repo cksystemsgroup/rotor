@@ -91,7 +91,7 @@ Each layer is independently benchmarked against L0 on a fixed corpus.
 
 ---
 
-## L0: the BTOR2 compiler (phases 1–7)
+## L0: the BTOR2 compiler (phases 1–9)
 
 L0 is the reference implementation. It can answer every API question
 without any IR. L1–L3 optimize this path; they never replace it.
@@ -200,6 +200,63 @@ L0 ships when:
   work from the CLI.
 - Integration tests pass in CI.
 - README's Quick Start walk-through runs as written.
+
+### Phase 8 — Full RV64I
+
+**Deliverable:** expanded `rotor/btor2/riscv/decoder.py`,
+`rotor/btor2/riscv/isa.py`, mirrored in `rotor/witness.py`.
+
+M1's L0 supports six instructions (addi, addw, sub, sltu, blt, jalr) —
+enough to model leaf functions GCC compiles from `add2.c`. Phase 8
+brings L0 to full RV64I-base coverage so any leaf function compiled
+with `-march=rv64i` decodes and runs:
+
+- I-type arith complete: slti, sltiu, xori, ori, andi, slli, srli,
+  srai, addiw, slliw, srliw, sraiw.
+- R-type arith complete: add, sll, slt, xor, srl, sra, or, and,
+  subw, sllw, srlw, sraw.
+- Branches complete: beq, bne, bge, bltu, bgeu (blt already done).
+- U-type: lui, auipc.
+- J-type: jal.
+- Misc-mem: fence (modeled as no-op — safe approximation for
+  single-core reasoning).
+
+System instructions (ecall, ebreak) are modeled in Phase F (syscalls),
+not here. Loads/stores are Phase 9 (memory).
+
+**Architectural cleanup:** the decoder and ISA lowering refactor from
+flat if/elif into opcode-dispatched tables. With ~30 instructions a
+linear chain stops being readable.
+
+**Tests:** decoder coverage of every new opcode; witness simulator
+mirrors the BTOR2 semantics for every instruction; new fixture
+`branches.elf` exercises all six branch types; L0-equivalence corpus
+gains entries that take the new control-flow paths.
+
+### Phase 9 — Memory model
+
+**Deliverable:** array-sort BTOR2 + memory-aware builder + interpreter.
+
+Adds the SMT array of bytes that lets rotor model loads, stores, and
+non-leaf functions (stack save/restore, .rodata access, anything
+touching memory).
+
+- BTOR2 nodes: array sort `bv64 -> bv8`, ops `read` / `write` /
+  `init_array` (constant array), serialized by `printer.py`.
+- Z3 backend: `z3.Array`, `z3.Select`, `z3.Store`.
+- Memory state: byte-addressed, single state variable
+  `mem: bv64 -> bv8`. Initial value: ELF `.text`/`.rodata`/`.data`/
+  `.bss` segments stored at their virtual addresses; everything else
+  free.
+- Loads (lb / lh / lw / ld + lbu / lhu / lwu) compose multiple byte
+  reads with concat plus sign- or zero-extension.
+- Stores (sb / sh / sw / sd) decompose the value with slice plus
+  multiple writes.
+- Witness simulator gains a concrete `dict[int, int]` memory mirror.
+
+**Tests:** non-leaf function fixture (with stack save/restore around
+ra), .rodata-reading fixture, alignment-relevant load/store
+combinations. Equivalence corpus extended.
 
 ---
 
@@ -410,13 +467,20 @@ CI matrix:
 | **M2** | Phases 4–5: portfolio + source trace | Trace markdown lands for BMC counterexamples |
 | **M3** | Phases 6–7: IC3/CEGAR + API/CLI parity | README Quick Start runs verbatim |
 | **M4** | BTOR2 emitter seam introduced (no behavior change) | `IdentityEmitter` used end-to-end; tests green |
-| **M5** | L1 (BV DAG) ships | L0-equivalence harness passes |
-| **M6** | L2 (SSA-BV) ships | L0-equivalence + slicing metrics |
-| **M7** | L3 (BVDD) pure-Python prototype | L0-equivalence on set-heavy workloads |
-| **M8** | L3 Rust backend (optional) | Measurable improvement over Python prototype |
+| **M5** | Phase 8: full RV64I in the native L0 builder | branches.elf fixture passes; decoder + witness cover every RV64I instruction |
+| **M6** | Phase 9: memory model — SMT array of bytes; loads / stores; ELF segment loader | non-leaf and .rodata-reading fixtures pass |
+| **M7** | L1 (BV DAG) ships | L0-equivalence harness passes |
+| **M8** | L2 (SSA-BV) ships | L0-equivalence + slicing metrics |
+| **M9** | L3 (BVDD) pure-Python prototype | L0-equivalence on set-heavy workloads |
+| **M10** | L3 Rust backend (optional) | Measurable improvement over Python prototype |
 
-M1–M3 are the L0 shipping gate. M4 is the seam. M5–M8 are optional and
-additive; each can be pursued independently once M4 lands.
+M1–M3 are the L0 shipping gate. M4 is the seam. M5–M6 expand L0's
+RISC-V coverage so the corpus can grow before any IR work begins.
+M7–M10 are the IR layers, each independently pursuable once M4 lands.
+
+Future small follow-ups beyond M10 (each ~1 day): RV64M (mul/div/rem),
+RVC (compressed instructions), syscall modeling matching selfie, and
+two-core composition for the `are_equivalent` verb.
 
 ---
 
