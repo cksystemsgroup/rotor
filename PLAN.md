@@ -36,20 +36,27 @@ rotor/
 │   ├── __init__.py
 │   ├── binary.py                ← L0 Phase 1: ELF + DWARF parsing
 │   ├── dwarf.py                 ← L0 Phase 1: DWARF evaluation
-│   ├── btor2/                   ← L0 Phase 2: BTOR2 generation (C rotor bridge)
+│   ├── btor2/                   ← L0 Phase 2: BTOR2 generation (native Python)
 │   │   ├── __init__.py
 │   │   ├── nodes.py
 │   │   ├── builder.py
 │   │   ├── printer.py
-│   │   └── parser.py
+│   │   ├── parser.py
+│   │   └── riscv/               ← L0 Phase 8: RV64I decoder + ISA lowering
+│   │       ├── __init__.py
+│   │       ├── decoder.py
+│   │       └── isa.py
+│   ├── riscv/                   ← non-BTOR2 RISC-V utilities (disasm, etc.)
+│   │   ├── __init__.py
+│   │   └── disasm.py
 │   ├── solvers/                 ← L0 Phase 3: solver backends
 │   │   ├── base.py
-│   │   ├── bitwuzla.py
-│   │   ├── btormc.py
-│   │   ├── bmc.py
-│   │   ├── kind.py
-│   │   ├── ic3.py
-│   │   └── portfolio.py
+│   │   ├── z3bv.py              ← M1–M7: Z3 BMC backend (shipping)
+│   │   ├── portfolio.py
+│   │   ├── bitwuzla.py          ← deferred: additional BMC backend
+│   │   ├── btormc.py            ← deferred: native BTOR2 model checker
+│   │   ├── kind.py              ← deferred: shared k-induction driver
+│   │   └── ic3.py               ← deferred: IC3/PDR subprocess bridges
 │   ├── ir/                      ← L1–L3: internal representations
 │   │   ├── __init__.py
 │   │   ├── protocols.py         ← capability protocols
@@ -128,16 +135,18 @@ printer/parser.
 ### Phase 3 — RotorInstance and solver interface
 
 **Deliverable:** `rotor/instance.py`, `rotor/solvers/base.py`,
-`rotor/solvers/bitwuzla.py`, `rotor/solvers/btormc.py`,
-`rotor/solvers/bmc.py`, `rotor/solvers/kind.py`.
+`rotor/solvers/z3bv.py`.
 
 - `RotorInstance` holds one BTOR2 model plus added init/bad/constraint
   nodes; provides `check(mode, bound, timeout)`.
 - `SolverBackend` Protocol: `check(btor2_bytes, mode, bound, timeout)
   -> SolverResult(verdict, model?, invariant?)`.
-- Concrete backends: Bitwuzla (BMC via SMT-LIB), BtorMC (BMC direct), a
-  shared k-induction driver, and a subprocess bridge for external
-  engines.
+- M1 scope ships a single concrete backend: `Z3BMC` (Z3 as BMC engine
+  over the BTOR2 model). Additional backends — Bitwuzla (BMC via
+  SMT-LIB), BtorMC (BMC direct), a shared k-induction driver, and
+  subprocess bridges for external engines — are deferred; each lands
+  under the existing `SolverBackend` Protocol without further
+  architectural change.
 
 **Tests:** unit + integration against fixture BTOR2.
 
@@ -279,9 +288,12 @@ class IdentityEmitter:
         return _c_rotor_emit(spec)
 ```
 
-`RotorInstance` accepts an `emitter` parameter; default is
-`IdentityEmitter`. Every IR implements `BTOR2Emitter`. This is the single
-change that prepares the codebase for L1–L3 without adding behavior.
+`RotorEngine` accepts an `emitter_factory` parameter (a callable
+`RISCVBinary -> BTOR2Emitter`); the default is `IdentityEmitter`. The
+engine constructs the emitter once per binary and reuses it across
+`RotorInstance`s it spawns. Every IR implements `BTOR2Emitter`. This is
+the single change that prepares the codebase for L1–L3 without adding
+behavior.
 
 ---
 
@@ -470,6 +482,7 @@ CI matrix:
 | **M5** | Phase 8: full RV64I in the native L0 builder | branches.elf fixture passes; decoder + witness cover every RV64I instruction |
 | **M6** | Phase 9: memory model — SMT array of bytes; loads / stores; ELF segment loader | non-leaf and .rodata-reading fixtures pass |
 | **M7** | L1 (BV DAG) ships | L0-equivalence harness passes |
+| **M7.5** | BTOR2 parser (5 phases): inverse of printer, round-trip + diagnostics tests, HWMCC benchmark coverage, `btor2-roundtrip` + `solve-btor2` CLI subcommands, README section | Round-trip on rotor-emitted models and HWMCC corpus |
 | **M8** | L2 (SSA-BV) ships | L0-equivalence + slicing metrics |
 | **M9** | L3 (BVDD) pure-Python prototype | L0-equivalence on set-heavy workloads |
 | **M10** | L3 Rust backend (optional) | Measurable improvement over Python prototype |
@@ -477,6 +490,9 @@ CI matrix:
 M1–M3 are the L0 shipping gate. M4 is the seam. M5–M6 expand L0's
 RISC-V coverage so the corpus can grow before any IR work begins.
 M7–M10 are the IR layers, each independently pursuable once M4 lands.
+M7.5 is a parallel track that landed alongside M7: it makes BTOR2 a
+first-class ingestion format for debugging and benchmarking without
+extending rotor's source-lift contract (see Non-goals).
 
 Future small follow-ups beyond M10 (each ~1 day): RV64M (mul/div/rem),
 RVC (compressed instructions), syscall modeling matching selfie, and
