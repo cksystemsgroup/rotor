@@ -1,14 +1,19 @@
 """Parallel race over (backend, bound) configurations.
 
-BMC verdict semantics constrain how the race resolves:
+Verdict semantics constrain how the race resolves:
 
     reachable     — globally conclusive (a concrete counterexample exists).
+    proved        — globally conclusive (safe for all bounds, with
+                    optional invariant certificate).
     unreachable   — only means "safe up to bound k"; a larger bound
                     could still find a bug. Not globally conclusive.
     unknown       — weakest; timeout or solver-internal failure.
 
-So the portfolio short-circuits on the first `reachable` result. If no
-config finds reachability, it waits for every config to settle and
+The portfolio short-circuits on the first globally-conclusive result
+(`reachable` or `proved`). `reachable` wins over `proved` if both
+arrive, since a counterexample is a stronger form of evidence than a
+certificate for the user: it is concrete. If no globally-conclusive
+verdict appears, the portfolio waits for every config to settle and
 returns the deepest `unreachable` (the strongest safe-up-to claim
 available). If nothing conclusive remains, the result is `unknown`.
 
@@ -58,9 +63,9 @@ class Portfolio:
 
         collected: list[SolverResult] = []
         pending = set(futures)
-        reachable: Optional[SolverResult] = None
+        conclusive: Optional[SolverResult] = None
         try:
-            while pending and reachable is None:
+            while pending and conclusive is None:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 for fut in done:
                     try:
@@ -74,16 +79,16 @@ class Portfolio:
                             reason=f"{type(exc).__name__}: {exc}",
                         )
                     collected.append(result)
-                    if result.verdict == "reachable":
-                        reachable = result
+                    if result.verdict in ("reachable", "proved"):
+                        conclusive = result
                         break
         finally:
             for fut in pending:
                 fut.cancel()
             pool.shutdown(wait=False, cancel_futures=True)
 
-        if reachable is not None:
-            return reachable
+        if conclusive is not None:
+            return conclusive
 
         unreachable = [r for r in collected if r.verdict == "unreachable"]
         if unreachable:

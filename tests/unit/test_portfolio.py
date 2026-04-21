@@ -17,6 +17,7 @@ class _Fake:
     name: str
     verdict: str
     delay: float = 0.0
+    invariant: str | None = None
 
     def check_reach(self, model: Model, bound: int, timeout=None) -> SolverResult:
         time.sleep(self.delay)
@@ -26,6 +27,7 @@ class _Fake:
             step=0 if self.verdict == "reachable" else None,
             elapsed=self.delay,
             backend=self.name,
+            invariant=self.invariant,
         )
 
 
@@ -63,6 +65,30 @@ def test_reachable_preferred_over_concurrent_unknown() -> None:
     p = Portfolio()
     p.add(_Fake("rch", "reachable", delay=0.02), bound=1)
     p.add(_Fake("unk", "unknown", delay=0.0), bound=1)
+    r = p.check_reach(Model())
+    assert r.verdict == "reachable"
+
+
+def test_proved_short_circuits_like_reachable() -> None:
+    # An unbounded `proved` verdict is globally conclusive; the portfolio
+    # must return it without waiting for remaining unreachable racers.
+    p = Portfolio()
+    p.add(_Fake("spacer", "proved", delay=0.01, invariant="pc < 0x1000"), bound=0)
+    p.add(_Fake("slow-unreach", "unreachable", delay=0.1), bound=50)
+    r = p.check_reach(Model())
+    assert r.verdict == "proved"
+    assert r.backend == "spacer"
+    assert r.invariant == "pc < 0x1000"
+
+
+def test_reachable_beats_proved() -> None:
+    # Both verdicts are globally conclusive; a concrete counterexample is
+    # a stronger form of evidence than a safety certificate, so whichever
+    # arrives first wins — but when the reachable one arrives first, it
+    # must not be overridden by a later proved.
+    p = Portfolio()
+    p.add(_Fake("rch", "reachable", delay=0.01), bound=5)
+    p.add(_Fake("prv", "proved", delay=0.05, invariant="true"), bound=0)
     r = p.check_reach(Model())
     assert r.verdict == "reachable"
 

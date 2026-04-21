@@ -21,13 +21,14 @@ from rotor.trace import Trace, build_trace
 
 @dataclass(frozen=True)
 class ReachResult:
-    verdict: str                       # "reachable" | "unreachable" | "unknown"
+    verdict: str                       # "reachable" | "unreachable" | "proved" | "unknown"
     bound: int
     step: Optional[int]
     initial_regs: dict[str, int]
     elapsed: float
     backend: str
     trace: Optional[Trace] = None      # populated when verdict == "reachable"
+    invariant: Optional[str] = None    # certificate when verdict == "proved"
 
 
 class RotorAPI:
@@ -98,4 +99,5 @@ class RotorAPI:
             elapsed=result.elapsed,
             backend=result.backend,
             trace=trace,
+            invariant=result.invariant,
         )

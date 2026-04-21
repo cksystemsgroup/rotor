@@ -4,6 +4,11 @@ Translates a BTOR2 Model into Z3 bitvector expressions, unrolls the
 transition relation to a bounded depth, and asks Z3 whether any bad
 state is reachable within that depth.
 
+Z3BMC is bounded by construction: it returns `reachable` (with a
+concrete counterexample), `unreachable` (safe up to the given bound,
+never more), or `unknown`. It never returns `proved` — that verdict
+belongs to unbounded engines like Z3Spacer (Phase 6).
+
 Every check_reach call runs on a fresh z3.Context — the Z3 Python API
 is not thread-safe with a shared default context, and the portfolio
 backend runs backends concurrently. Each fresh context is cheap and

@@ -172,6 +172,8 @@ def cmd_reach(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
         print(f"step     : {r.step}", file=out)
     print(f"elapsed  : {r.elapsed * 1000:.1f}ms", file=out)
     print(f"backend  : {r.backend}", file=out)
+    if r.invariant is not None:
+        print(f"invariant: {r.invariant}", file=out)
 
     if r.trace is not None:
         md = r.trace.to_markdown()
@@ -183,7 +185,7 @@ def cmd_reach(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
 
     if r.verdict == "reachable":
         return EXIT_FOUND
-    if r.verdict == "unreachable":
+    if r.verdict in ("unreachable", "proved"):
         return EXIT_OK
     return EXIT_UNKNOWN
 
@@ -206,8 +208,9 @@ def cmd_solve_btor2(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
 
     The default is a single entry at bound 20 (mirroring `rotor reach`).
     Passing `--bound` multiple times builds a race across those bounds;
-    the portfolio short-circuits on the first `reachable` verdict and
-    otherwise returns the deepest `unreachable`.
+    the portfolio short-circuits on the first globally-conclusive verdict
+    (`reachable` or `proved`) and otherwise returns the deepest
+    `unreachable`.
     """
     r = parse_btor2_file(args.file)
     _print_diagnostics(r, err)
@@ -226,12 +229,14 @@ def cmd_solve_btor2(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
         print(f"step     : {result.step}", file=out)
     print(f"elapsed  : {result.elapsed * 1000:.1f}ms", file=out)
     print(f"backend  : {result.backend}", file=out)
+    if result.invariant is not None:
+        print(f"invariant: {result.invariant}", file=out)
     if result.reason is not None:
         print(f"reason   : {result.reason}", file=out)
 
     if result.verdict == "reachable":
         return EXIT_FOUND
-    if result.verdict == "unreachable":
+    if result.verdict in ("unreachable", "proved"):
         return EXIT_OK
     return EXIT_UNKNOWN
 
