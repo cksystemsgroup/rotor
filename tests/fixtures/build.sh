@@ -65,5 +65,8 @@ echo "built: rodata.elf"
 # Phase 6.3 fixture — a loop whose dead branch is provable only via
 # an inductive invariant. Z3Spacer proves unbounded safety; Z3BMC
 # can only answer "unreachable up to bound k".
-build bounded_counter counter.elf counter.c
+# counter.elf has two entry symbols; build with tiny_mask as the
+# default entry so the ELF has a deterministic entrypoint, but both
+# symbols resolve.
+build tiny_mask counter.elf counter.c
 echo "built: counter.elf"

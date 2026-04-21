@@ -36,7 +36,7 @@ MASK64 = (1 << 64) - 1
 MASK32 = (1 << 32) - 1
 
 LowerResult = tuple[dict[int, Node], Node, Optional[Node]]
-LowerFn = Callable[[Decoded, int, Model, list[Node], Node], LowerResult]
+LowerFn = Callable[[Decoded, int, Model, list[Node], Optional[Node]], LowerResult]
 
 
 def lower(
@@ -44,8 +44,15 @@ def lower(
     pc_value: int,
     m: Model,
     regs: list[Node],
-    mem: Node,
+    mem: Optional[Node],
 ) -> LowerResult:
+    """Lower one decoded instruction.
+
+    `mem` is the current memory-array node; the caller may pass None
+    when building a model for a function that has no load/store
+    instructions. Non-memory lowerings ignore the parameter; memory
+    lowerings assume a valid Node.
+    """
     fn = DISPATCH.get(d.mnem)
     if fn is None:                                 # pragma: no cover — decoder filters
         raise AssertionError(f"lower: unsupported mnem {d.mnem!r}")
@@ -398,6 +405,12 @@ def _bool_to_bv64(m: Model, cond: Node) -> Node:
 # ---------------------------------------------------------------------------
 # Dispatch table.
 # ---------------------------------------------------------------------------
+
+MEMORY_MNEMONICS: frozenset[str] = frozenset({
+    "lb", "lh", "lw", "ld", "lbu", "lhu", "lwu",
+    "sb", "sh", "sw", "sd",
+})
+
 
 DISPATCH: dict[str, LowerFn] = {
     # OP-IMM
