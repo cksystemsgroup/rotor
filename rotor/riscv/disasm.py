@@ -19,8 +19,14 @@ ABI = (
 )
 
 # Instruction-class groups for compact rendering.
-_RR_64 = {"add", "sub", "and", "or", "xor", "slt", "sltu", "sll", "srl", "sra"}
-_RR_32 = {"addw", "subw", "sllw", "srlw", "sraw"}
+_RR_64 = {
+    "add", "sub", "and", "or", "xor", "slt", "sltu", "sll", "srl", "sra",
+    "mul", "mulh", "mulhsu", "mulhu", "div", "divu", "rem", "remu",
+}
+_RR_32 = {
+    "addw", "subw", "sllw", "srlw", "sraw",
+    "mulw", "divw", "divuw", "remw", "remuw",
+}
 _RI_64 = {"addi", "andi", "ori", "xori", "slti", "sltiu", "slli", "srli", "srai"}
 _RI_32 = {"addiw", "slliw", "srliw", "sraiw"}
 _BR    = {"beq", "bne", "blt", "bge", "bltu", "bgeu"}

@@ -229,6 +229,12 @@ def _apply_op(tm, opname: str, args, bv0, bv1):
         "and": K.BV_AND, "or": K.BV_OR, "xor": K.BV_XOR,
         "sll": K.BV_SHL, "srl": K.BV_SHR, "sra": K.BV_ASHR,
         "concat": K.BV_CONCAT,
+        # M extension. RISC-V DIV/REM edge cases (div-by-zero,
+        # INT_MIN/-1 overflow) are handled by ITE wrappers in the
+        # ISA lowering before these ops are emitted.
+        "mul":  K.BV_MUL,
+        "udiv": K.BV_UDIV, "sdiv": K.BV_SDIV,
+        "urem": K.BV_UREM, "srem": K.BV_SREM,
     }
     if opname in simple:
         return tm.mk_term(simple[opname], [a, b])

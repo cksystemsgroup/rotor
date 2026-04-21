@@ -38,6 +38,8 @@ _BRANCHES = frozenset({"beq", "bne", "blt", "bge", "bltu", "bgeu"})
 _READS_RS1_AND_RS2 = _BRANCHES | frozenset({
     "add", "sub", "and", "or", "xor", "slt", "sltu", "sll", "srl", "sra",
     "addw", "subw", "sllw", "srlw", "sraw",
+    "mul", "mulh", "mulhsu", "mulhu", "div", "divu", "rem", "remu",
+    "mulw", "divw", "divuw", "remw", "remuw",
     "sb", "sh", "sw", "sd",
 })
 _READS_RS1_ONLY = frozenset({

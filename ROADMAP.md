@@ -75,24 +75,26 @@ the bridges automatically via the skipped `@skipif` tests.
 flags emit RVC (compressed) and RV64M (mul/div); any real binary
 fails on `decode() is None`.
 
-**Deliverable.**
+**Status.**
 
-1. **RV64M** — `mul`, `mulh`, `mulhsu`, `mulhu`, `div`, `divu`,
-   `rem`, `remu`, plus the `-w` 32-bit variants. Decoder + ISA
-   lowering + witness + per-instruction tests. About a day.
-2. **RVC** — variable-length encoding (16-bit / 32-bit mixed)
-   requires reshaping the instruction-stream scanner. ~30
-   compressed mnemonics expand to RV64I equivalents. About a
-   week — decoder refactor is the hard part; semantics reuse
-   existing RV64I lowerings.
-3. **ecall/ebreak stubs** — halt the machine cleanly. Full
-   syscall modeling is later.
+1. **RV64M.** ✅ **Shipped (B.1).** `mul`, `mulh`, `mulhsu`, `mulhu`,
+   `div`, `divu`, `rem`, `remu`, plus the `-w` 32-bit variants.
+   Decoder + ISA lowering (with ITE wrappers for the RISC-V div/rem
+   edge cases — div-by-zero, INT_MIN/-1 overflow) + witness
+   simulator + disasm formatting + liveness + CEGAR register-read
+   classification. Fixture: `mult.elf` built with `-march=rv64im`.
+   Exercised across both Z3 and Bitwuzla backends via the
+   L0-equivalence harness on SsaEmitter / DagEmitter / IdentityEmitter.
+2. **ecall/ebreak stubs.** ⏳ Pending (B.2).
+3. **RVC (compressed).** ⏳ Pending (B.3). The biggest lift —
+   variable-length encoding requires reshaping the instruction-
+   stream scanner.
+4. **Real gcc -O2 fixture.** ⏳ Pending (B.4). Depends on B.3.
 
 **Exit criterion.** Rotor decodes `gcc -O2` of a small CLI program
 end-to-end. Fixture: a non-trivial binary with a known
-reachability property.
-
-**Effort estimate.** ~1.5 weeks.
+reachability property. Met partially — RV64M is in; RVC is still
+needed for default-flags gcc/clang output.
 
 ---
 

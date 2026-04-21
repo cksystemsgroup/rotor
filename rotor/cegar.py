@@ -61,6 +61,9 @@ _READS_RS1_AND_RS2 = frozenset({
     # R-type arithmetic
     "add", "sub", "and", "or", "xor", "slt", "sltu", "sll", "srl", "sra",
     "addw", "subw", "sllw", "srlw", "sraw",
+    # M extension
+    "mul", "mulh", "mulhsu", "mulhu", "div", "divu", "rem", "remu",
+    "mulw", "divw", "divuw", "remw", "remuw",
     # Branches
     "beq", "bne", "blt", "bge", "bltu", "bgeu",
     # Stores (rs1 = base, rs2 = value)

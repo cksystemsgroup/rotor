@@ -264,4 +264,21 @@ def _apply_op(
         return z3.If(a >= b, bv1, bv0)
     if opname == "concat":
         return z3.Concat(a, b)
+    if opname == "mul":
+        return a * b
+    if opname == "udiv":
+        # RISC-V DIVU: divisor == 0 → all ones. Matches Z3's bvudiv per
+        # the SMT-LIB-v2.6 semantics.
+        return z3.UDiv(a, b)
+    if opname == "sdiv":
+        # Z3's `/` on BV is signed truncating division, divide-by-zero
+        # returns -1 for non-negative dividends and +1 for negative.
+        # RISC-V DIV wants div-by-zero → -1 and INT_MIN/-1 → INT_MIN;
+        # the ISA lowering handles those special cases with an ITE
+        # before this op is invoked, so the raw sdiv is safe here.
+        return a / b
+    if opname == "urem":
+        return z3.URem(a, b)
+    if opname == "srem":
+        return z3.SRem(a, b)
     raise ValueError(f"unknown op: {opname!r}")

@@ -148,6 +148,18 @@ def _decode_op(word: int) -> Optional[Decoded]:
         if funct3 == 0b101:
             return Decoded("sra", rd, rs1, rs2, 0)
         return None
+    if funct7 == 0b0000001:                        # M extension
+        m = {
+            0b000: "mul",
+            0b001: "mulh",
+            0b010: "mulhsu",
+            0b011: "mulhu",
+            0b100: "div",
+            0b101: "divu",
+            0b110: "rem",
+            0b111: "remu",
+        }.get(funct3)
+        return Decoded(m, rd, rs1, rs2, 0) if m else None
     return None
 
 
@@ -163,6 +175,15 @@ def _decode_op_32(word: int) -> Optional[Decoded]:
             return Decoded("subw", rd, rs1, rs2, 0)
         if funct3 == 0b101:
             return Decoded("sraw", rd, rs1, rs2, 0)
+    if funct7 == 0b0000001:                        # M extension (32-bit variants)
+        m = {
+            0b000: "mulw",
+            0b100: "divw",
+            0b101: "divuw",
+            0b110: "remw",
+            0b111: "remuw",
+        }.get(funct3)
+        return Decoded(m, rd, rs1, rs2, 0) if m else None
     return None
 
 

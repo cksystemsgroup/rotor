@@ -257,6 +257,124 @@ def _h_sraw(d, pc, regs, mem):
     return (pc + 4) & MASK
 
 
+# M extension — mirrors rotor/btor2/riscv/isa.py's RISC-V spec edge
+# cases. Must stay in lockstep with the BTOR2 lowering; any divergence
+# invalidates witness replay against the model.
+
+def _trunc_div(a: int, b: int) -> int:
+    """Truncated signed division (rounds toward zero)."""
+    q = abs(a) // abs(b)
+    return -q if (a < 0) != (b < 0) else q
+
+
+def _h_mul(d, pc, regs, mem):
+    _write(regs, d.rd, (regs[d.rs1] * regs[d.rs2]) & MASK)
+    return (pc + 4) & MASK
+
+
+def _h_mulh_common(d, regs, *, sign_a: bool, sign_b: bool) -> int:
+    a = _signed64(regs[d.rs1]) if sign_a else regs[d.rs1] & MASK
+    b = _signed64(regs[d.rs2]) if sign_b else regs[d.rs2] & MASK
+    prod = a * b
+    return (prod >> 64) & MASK
+
+
+def _h_mulh(d, pc, regs, mem):
+    _write(regs, d.rd, _h_mulh_common(d, regs, sign_a=True, sign_b=True))
+    return (pc + 4) & MASK
+
+
+def _h_mulhsu(d, pc, regs, mem):
+    _write(regs, d.rd, _h_mulh_common(d, regs, sign_a=True, sign_b=False))
+    return (pc + 4) & MASK
+
+
+def _h_mulhu(d, pc, regs, mem):
+    _write(regs, d.rd, _h_mulh_common(d, regs, sign_a=False, sign_b=False))
+    return (pc + 4) & MASK
+
+
+def _h_divu(d, pc, regs, mem):
+    a, b = regs[d.rs1], regs[d.rs2]
+    _write(regs, d.rd, MASK if b == 0 else (a // b) & MASK)
+    return (pc + 4) & MASK
+
+
+def _h_remu(d, pc, regs, mem):
+    a, b = regs[d.rs1], regs[d.rs2]
+    _write(regs, d.rd, a if b == 0 else (a % b) & MASK)
+    return (pc + 4) & MASK
+
+
+def _h_div(d, pc, regs, mem):
+    a, b = _signed64(regs[d.rs1]), _signed64(regs[d.rs2])
+    if b == 0:
+        result = MASK                                # -1
+    elif a == -(1 << 63) and b == -1:
+        result = 1 << 63                              # INT_MIN overflow
+    else:
+        result = _trunc_div(a, b) & MASK
+    _write(regs, d.rd, result)
+    return (pc + 4) & MASK
+
+
+def _h_rem(d, pc, regs, mem):
+    a, b = _signed64(regs[d.rs1]), _signed64(regs[d.rs2])
+    if b == 0:
+        result = regs[d.rs1]                          # dividend
+    elif a == -(1 << 63) and b == -1:
+        result = 0                                    # overflow
+    else:
+        result = (a - _trunc_div(a, b) * b) & MASK
+    _write(regs, d.rd, result)
+    return (pc + 4) & MASK
+
+
+# OP-32 M (sign-extended 32-bit results)
+
+def _h_mulw(d, pc, regs, mem):
+    _write(regs, d.rd, _sext32((regs[d.rs1] * regs[d.rs2]) & MASK32))
+    return (pc + 4) & MASK
+
+
+def _h_divuw(d, pc, regs, mem):
+    a, b = regs[d.rs1] & MASK32, regs[d.rs2] & MASK32
+    r32 = MASK32 if b == 0 else (a // b) & MASK32
+    _write(regs, d.rd, _sext32(r32))
+    return (pc + 4) & MASK
+
+
+def _h_remuw(d, pc, regs, mem):
+    a, b = regs[d.rs1] & MASK32, regs[d.rs2] & MASK32
+    r32 = a if b == 0 else (a % b) & MASK32
+    _write(regs, d.rd, _sext32(r32))
+    return (pc + 4) & MASK
+
+
+def _h_divw(d, pc, regs, mem):
+    a, b = _signed32(regs[d.rs1]), _signed32(regs[d.rs2])
+    if b == 0:
+        r32 = MASK32
+    elif a == -(1 << 31) and b == -1:
+        r32 = 1 << 31
+    else:
+        r32 = _trunc_div(a, b) & MASK32
+    _write(regs, d.rd, _sext32(r32))
+    return (pc + 4) & MASK
+
+
+def _h_remw(d, pc, regs, mem):
+    a, b = _signed32(regs[d.rs1]), _signed32(regs[d.rs2])
+    if b == 0:
+        r32 = regs[d.rs1] & MASK32
+    elif a == -(1 << 31) and b == -1:
+        r32 = 0
+    else:
+        r32 = (a - _trunc_div(a, b) * b) & MASK32
+    _write(regs, d.rd, _sext32(r32))
+    return (pc + 4) & MASK
+
+
 # Branches
 def _h_beq(d, pc, regs, mem):
     return (pc + d.imm) & MASK if regs[d.rs1] == regs[d.rs2] else (pc + 4) & MASK
@@ -405,5 +523,10 @@ _STEP: dict[str, Callable[[Decoded, int, list[int], dict[int, int]], int]] = {
     "lb":  _h_lb,  "lh":  _h_lh,  "lw":  _h_lw,  "ld":  _h_ld,
     "lbu": _h_lbu, "lhu": _h_lhu, "lwu": _h_lwu,
     "sb":  _h_sb,  "sh":  _h_sh,  "sw":  _h_sw,  "sd":  _h_sd,
+    # M extension
+    "mul": _h_mul, "mulh": _h_mulh, "mulhsu": _h_mulhsu, "mulhu": _h_mulhu,
+    "div": _h_div, "divu": _h_divu, "rem": _h_rem, "remu": _h_remu,
+    "mulw": _h_mulw, "divw": _h_divw, "divuw": _h_divuw,
+    "remw": _h_remw, "remuw": _h_remuw,
     "fence": _h_fence,
 }

@@ -70,3 +70,30 @@ echo "built: rodata.elf"
 # symbols resolve.
 build tiny_mask counter.elf counter.c
 echo "built: counter.elf"
+
+# Track B.1 fixture — RV64M (mul/div/rem). Built with -march=rv64im
+# so the compiler emits the M extension instead of library calls.
+build_m() {
+    local entry="$1"; shift
+    local out="$1"; shift
+    if [[ "$CC" == *clang* ]]; then
+        local obj
+        obj="$(mktemp --suffix=.o)"
+        "$CC" --target=riscv64 \
+            -march=rv64im -mabi=lp64 -O2 \
+            -ffreestanding -nostdlib -nostartfiles \
+            -fno-asynchronous-unwind-tables -fno-unwind-tables -g \
+            -c -o "$obj" "$@"
+        ld.lld -m elf64lriscv "--entry=$entry" -o "$out" "$obj"
+        rm -f "$obj"
+    else
+        "$CC" \
+            -march=rv64im -mabi=lp64 -O2 \
+            -ffreestanding -nostdlib -nostartfiles \
+            -fno-asynchronous-unwind-tables -fno-unwind-tables -g \
+            "-Wl,--entry=$entry" -o "$out" "$@"
+    fi
+}
+
+build_m mul_add mult.elf mult.c
+echo "built: mult.elf"

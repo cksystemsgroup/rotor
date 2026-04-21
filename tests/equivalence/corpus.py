@@ -31,6 +31,7 @@ ADD2 = "tests/fixtures/add2.elf"
 BRANCHES = "tests/fixtures/branches.elf"
 MEMOPS = "tests/fixtures/memops.elf"
 RODATA = "tests/fixtures/rodata.elf"
+MULT = "tests/fixtures/mult.elf"
 
 CORPUS: tuple[CorpusEntry, ...] = (
     # add2.elf — straight-line + simple conditional fixture (M1)
@@ -69,4 +70,12 @@ CORPUS: tuple[CorpusEntry, ...] = (
     CorpusEntry("pick-lw",                   RODATA, "pick", 0x14, 5, "reachable",   5),
     CorpusEntry("pick-ret",                  RODATA, "pick", 0x18, 6, "reachable",   6),
     CorpusEntry("pick-unreach-at-4",         RODATA, "pick", 0x10, 3, "unreachable", None),
+
+    # mult.elf — exercises the RV64M extension (mul / divuw / mulw).
+    CorpusEntry("mul_add-entry-trivial",     MULT, "mul_add", 0x00, 0, "reachable",   0),
+    CorpusEntry("mul_add-ret",               MULT, "mul_add", 0x08, 2, "reachable",   2),
+    CorpusEntry("divmod-entry-trivial",      MULT, "divmod",  0x00, 0, "reachable",   0),
+    CorpusEntry("divmod-ret",                MULT, "divmod",  0x10, 4, "reachable",   4),
+    CorpusEntry("mul64-entry-trivial",       MULT, "mul64",   0x00, 0, "reachable",   0),
+    CorpusEntry("mul64-ret",                 MULT, "mul64",   0x04, 1, "reachable",   1),
 )

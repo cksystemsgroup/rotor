@@ -204,6 +204,95 @@ def _sra(d, pc_value, m, regs, mem):
 
 
 # ---------------------------------------------------------------------------
+# M extension (RV64M). RISC-V spec edge cases:
+#   DIVU:   divisor == 0          → all ones (2^XLEN - 1)
+#   REMU:   divisor == 0          → dividend
+#   DIV:    divisor == 0          → -1
+#           INT_MIN / -1          → INT_MIN (overflow)
+#   REM:    divisor == 0          → dividend
+#           INT_MIN % -1          → 0 (overflow)
+# The -w variants operate on the low 32 bits and sign-extend the
+# result; their div/rem special cases use INT32_MIN instead.
+# ---------------------------------------------------------------------------
+
+BV128 = Sort(128)
+ALL_ONES_64 = MASK64
+INT_MIN_64 = 1 << 63
+ALL_ONES_32 = MASK32
+INT_MIN_32 = 1 << 31
+
+
+def _mul(d, pc_value, m, regs, mem):
+    return _i_writes(m, d, m.op("mul", BV64, regs[d.rs1], regs[d.rs2])), _fall(pc_value, m), None
+
+
+def _mulh_generic(d, pc_value, m, regs, mem, *, sign_a: bool, sign_b: bool):
+    """Upper 64 bits of the 128-bit product of rs1 and rs2.
+
+    `sign_a` / `sign_b` select sign-extension (for signed operands)
+    vs zero-extension (for unsigned) into 128 bits before the
+    multiplication. Covers all three RV64M high-half variants.
+    """
+    a128 = m.sext(regs[d.rs1], 64) if sign_a else m.uext(regs[d.rs1], 64)
+    b128 = m.sext(regs[d.rs2], 64) if sign_b else m.uext(regs[d.rs2], 64)
+    prod = m.op("mul", BV128, a128, b128)
+    hi = m.slice(prod, 127, 64)
+    return _i_writes(m, d, hi), _fall(pc_value, m), None
+
+
+def _mulh(d, pc_value, m, regs, mem):
+    return _mulh_generic(d, pc_value, m, regs, mem, sign_a=True, sign_b=True)
+
+
+def _mulhsu(d, pc_value, m, regs, mem):
+    return _mulh_generic(d, pc_value, m, regs, mem, sign_a=True, sign_b=False)
+
+
+def _mulhu(d, pc_value, m, regs, mem):
+    return _mulh_generic(d, pc_value, m, regs, mem, sign_a=False, sign_b=False)
+
+
+def _divu(d, pc_value, m, regs, mem):
+    a, b = regs[d.rs1], regs[d.rs2]
+    is_zero = m.op("eq", BV1, b, m.const(BV64, 0))
+    raw = m.op("udiv", BV64, a, b)
+    result = m.ite(is_zero, m.const(BV64, ALL_ONES_64), raw)
+    return _i_writes(m, d, result), _fall(pc_value, m), None
+
+
+def _remu(d, pc_value, m, regs, mem):
+    a, b = regs[d.rs1], regs[d.rs2]
+    is_zero = m.op("eq", BV1, b, m.const(BV64, 0))
+    raw = m.op("urem", BV64, a, b)
+    result = m.ite(is_zero, a, raw)
+    return _i_writes(m, d, result), _fall(pc_value, m), None
+
+
+def _div(d, pc_value, m, regs, mem):
+    a, b = regs[d.rs1], regs[d.rs2]
+    is_zero = m.op("eq", BV1, b, m.const(BV64, 0))
+    is_int_min = m.op("eq", BV1, a, m.const(BV64, INT_MIN_64))
+    is_minus_one = m.op("eq", BV1, b, m.const(BV64, ALL_ONES_64))
+    is_overflow = m.op("and", BV1, is_int_min, is_minus_one)
+    raw = m.op("sdiv", BV64, a, b)
+    overflow_result = m.const(BV64, INT_MIN_64)
+    zero_result = m.const(BV64, ALL_ONES_64)
+    result = m.ite(is_zero, zero_result, m.ite(is_overflow, overflow_result, raw))
+    return _i_writes(m, d, result), _fall(pc_value, m), None
+
+
+def _rem(d, pc_value, m, regs, mem):
+    a, b = regs[d.rs1], regs[d.rs2]
+    is_zero = m.op("eq", BV1, b, m.const(BV64, 0))
+    is_int_min = m.op("eq", BV1, a, m.const(BV64, INT_MIN_64))
+    is_minus_one = m.op("eq", BV1, b, m.const(BV64, ALL_ONES_64))
+    is_overflow = m.op("and", BV1, is_int_min, is_minus_one)
+    raw = m.op("srem", BV64, a, b)
+    result = m.ite(is_zero, a, m.ite(is_overflow, m.const(BV64, 0), raw))
+    return _i_writes(m, d, result), _fall(pc_value, m), None
+
+
+# ---------------------------------------------------------------------------
 # OP-32 (R-type, 32-bit).
 # ---------------------------------------------------------------------------
 
@@ -243,6 +332,67 @@ def _sraw(d, pc_value, m, regs, mem):
     shamt = m.op("and", BV32, lo2, m.const(BV32, 31))
     sh32 = m.op("sra", BV32, lo1, shamt)
     return _i_writes(m, d, m.sext(sh32, 32)), _fall(pc_value, m), None
+
+
+# ---------------------------------------------------------------------------
+# OP-32 M extension (RV64M -w variants). Low 32 bits only; sign-extend.
+# Div/rem special cases match the -w versions of the ISA spec using
+# INT32_MIN as the overflow dividend.
+# ---------------------------------------------------------------------------
+
+def _mulw(d, pc_value, m, regs, mem):
+    lo1 = m.slice(regs[d.rs1], 31, 0)
+    lo2 = m.slice(regs[d.rs2], 31, 0)
+    prod32 = m.op("mul", BV32, lo1, lo2)
+    return _i_writes(m, d, m.sext(prod32, 32)), _fall(pc_value, m), None
+
+
+def _divuw(d, pc_value, m, regs, mem):
+    lo1 = m.slice(regs[d.rs1], 31, 0)
+    lo2 = m.slice(regs[d.rs2], 31, 0)
+    is_zero = m.op("eq", BV1, lo2, m.const(BV32, 0))
+    raw = m.op("udiv", BV32, lo1, lo2)
+    result32 = m.ite(is_zero, m.const(BV32, ALL_ONES_32), raw)
+    return _i_writes(m, d, m.sext(result32, 32)), _fall(pc_value, m), None
+
+
+def _remuw(d, pc_value, m, regs, mem):
+    lo1 = m.slice(regs[d.rs1], 31, 0)
+    lo2 = m.slice(regs[d.rs2], 31, 0)
+    is_zero = m.op("eq", BV1, lo2, m.const(BV32, 0))
+    raw = m.op("urem", BV32, lo1, lo2)
+    result32 = m.ite(is_zero, lo1, raw)
+    return _i_writes(m, d, m.sext(result32, 32)), _fall(pc_value, m), None
+
+
+def _divw(d, pc_value, m, regs, mem):
+    lo1 = m.slice(regs[d.rs1], 31, 0)
+    lo2 = m.slice(regs[d.rs2], 31, 0)
+    is_zero = m.op("eq", BV1, lo2, m.const(BV32, 0))
+    is_int_min = m.op("eq", BV1, lo1, m.const(BV32, INT_MIN_32))
+    is_minus_one = m.op("eq", BV1, lo2, m.const(BV32, ALL_ONES_32))
+    is_overflow = m.op("and", BV1, is_int_min, is_minus_one)
+    raw = m.op("sdiv", BV32, lo1, lo2)
+    result32 = m.ite(
+        is_zero, m.const(BV32, ALL_ONES_32),
+        m.ite(is_overflow, m.const(BV32, INT_MIN_32), raw),
+    )
+    return _i_writes(m, d, m.sext(result32, 32)), _fall(pc_value, m), None
+
+
+def _remw(d, pc_value, m, regs, mem):
+    lo1 = m.slice(regs[d.rs1], 31, 0)
+    lo2 = m.slice(regs[d.rs2], 31, 0)
+    is_zero = m.op("eq", BV1, lo2, m.const(BV32, 0))
+    is_int_min = m.op("eq", BV1, lo1, m.const(BV32, INT_MIN_32))
+    is_minus_one = m.op("eq", BV1, lo2, m.const(BV32, ALL_ONES_32))
+    is_overflow = m.op("and", BV1, is_int_min, is_minus_one)
+    raw = m.op("srem", BV32, lo1, lo2)
+    result32 = m.ite(
+        is_zero, lo1,
+        m.ite(is_overflow, m.const(BV32, 0), raw),
+    )
+    return _i_writes(m, d, m.sext(result32, 32)), _fall(pc_value, m), None
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +619,20 @@ DISPATCH: dict[str, LowerFn] = {
     "sh":    _sh,
     "sw":    _sw,
     "sd":    _sd,
+    # M extension
+    "mul":    _mul,
+    "mulh":   _mulh,
+    "mulhsu": _mulhsu,
+    "mulhu":  _mulhu,
+    "div":    _div,
+    "divu":   _divu,
+    "rem":    _rem,
+    "remu":   _remu,
+    "mulw":   _mulw,
+    "divw":   _divw,
+    "divuw":  _divuw,
+    "remw":   _remw,
+    "remuw":  _remuw,
     # Misc
     "fence": _fence,
 }
