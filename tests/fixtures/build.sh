@@ -125,3 +125,7 @@ build_imc() {
 
 build_imc add_rvc rvc.elf rvc.c
 echo "built: rvc.elf"
+
+# Track B.4 fixture — combines RV64M + RVC in one small library.
+build_imc is_power_of_two bitops.elf bitops.c
+echo "built: bitops.elf"

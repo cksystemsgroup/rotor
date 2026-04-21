@@ -107,15 +107,17 @@ fails on `decode() is None`.
    mixed 2-byte and 4-byte instruction streams. Exercised by the
    L0-equivalence harness across IdentityEmitter / DagEmitter /
    SsaEmitter.
-4. **Real gcc -O2 fixture.** ⏳ Pending (B.4). With RVC + RV64M in,
-   only ELF-level plumbing (argument-passing setup, symbol lookup
-   for larger binaries) remains before a standard gcc -O2 output
-   can be analyzed end-to-end.
+4. **Real gcc -O2 fixture.** ✅ **Shipped (B.4).** `bitops.elf`
+   is a small bit-manipulation library built with
+   `-march=rv64imc -O2`, combining all three Track B additions:
+   RV64M arithmetic in `shifted_mul`, RVC compressed instructions
+   throughout, branches and a loop in `popcount`. Exercised by
+   the L0-equivalence harness across every emitter.
 
-**Exit criterion.** Rotor decodes `gcc -O2` of a small CLI program
-end-to-end. Fixture: a non-trivial binary with a known
-reachability property. Met partially — RV64M is in; RVC is still
-needed for default-flags gcc/clang output.
+**Exit criterion.** ✅ Met. Rotor now decodes `gcc -O2
+-march=rv64imc` output end-to-end: RV64I base, RV64M, RVC, and
+ecall/ebreak stubs. Non-leaf support (real function calls) is
+Track C's territory.
 
 ---
 

@@ -33,6 +33,7 @@ MEMOPS = "tests/fixtures/memops.elf"
 RODATA = "tests/fixtures/rodata.elf"
 MULT = "tests/fixtures/mult.elf"
 RVC = "tests/fixtures/rvc.elf"
+BITOPS = "tests/fixtures/bitops.elf"
 
 CORPUS: tuple[CorpusEntry, ...] = (
     # add2.elf — straight-line + simple conditional fixture (M1)
@@ -86,4 +87,12 @@ CORPUS: tuple[CorpusEntry, ...] = (
     CorpusEntry("triple-entry-trivial",      RVC, "triple",  0x00, 0, "reachable",   0),
     CorpusEntry("triple-ret",                RVC, "triple",  0x08, 3, "reachable",   3),
     CorpusEntry("signbit-ret",               RVC, "signbit", 0x04, 1, "reachable",   1),
+
+    # bitops.elf — Track B.4 capstone fixture combining RV64M + RVC
+    # in a realistic mini bit-manipulation library.
+    CorpusEntry("is_power_of_two-entry",     BITOPS, "is_power_of_two", 0x00, 0, "reachable", 0),
+    CorpusEntry("is_power_of_two-ret",       BITOPS, "is_power_of_two", 0x0c, 4, "reachable", 4),
+    CorpusEntry("popcount-entry",            BITOPS, "popcount",        0x00, 0, "reachable", 0),
+    CorpusEntry("shifted_mul-entry",         BITOPS, "shifted_mul",     0x00, 0, "reachable", 0),
+    CorpusEntry("shifted_mul-ret",           BITOPS, "shifted_mul",     0x08, 2, "reachable", 2),
 )
