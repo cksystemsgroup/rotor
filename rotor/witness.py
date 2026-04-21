@@ -18,6 +18,7 @@ model. Kept side-by-side deliberately; cross-checked by tests.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -66,6 +67,8 @@ def simulate(
     for s in range(max_steps + 1):
         inst = instructions.get(pc)
         d = decode(inst.word) if inst is not None else None
+        if inst is not None and d is not None and inst.size != d.size:
+            d = dataclasses.replace(d, size=inst.size)
         steps.append(
             MachineStep(
                 step=s, pc=pc,
@@ -115,146 +118,146 @@ def _sext32(v: int) -> int:
 # I-type
 def _h_addi(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] + d.imm)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_xori(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] ^ (d.imm & MASK))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_ori(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] | (d.imm & MASK))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_andi(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] & (d.imm & MASK))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_slti(d, pc, regs, mem):
     _write(regs, d.rd, 1 if _signed64(regs[d.rs1]) < d.imm else 0)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sltiu(d, pc, regs, mem):
     _write(regs, d.rd, 1 if regs[d.rs1] < (d.imm & MASK) else 0)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_slli(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] << (d.imm & 63))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_srli(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] >> (d.imm & 63))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_srai(d, pc, regs, mem):
     _write(regs, d.rd, _signed64(regs[d.rs1]) >> (d.imm & 63))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_addiw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32((regs[d.rs1] + d.imm) & MASK32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_slliw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32((regs[d.rs1] << (d.imm & 31)) & MASK32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_srliw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32(((regs[d.rs1] & MASK32) >> (d.imm & 31)) & MASK32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sraiw(d, pc, regs, mem):
     lo = _signed32(regs[d.rs1])
     _write(regs, d.rd, _sext32((lo >> (d.imm & 31)) & MASK32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 # R-type
 def _h_add(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] + regs[d.rs2])
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sub(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] - regs[d.rs2])
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_and(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] & regs[d.rs2])
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_or(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] | regs[d.rs2])
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_xor(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] ^ regs[d.rs2])
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_slt(d, pc, regs, mem):
     _write(regs, d.rd, 1 if _signed64(regs[d.rs1]) < _signed64(regs[d.rs2]) else 0)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sltu(d, pc, regs, mem):
     _write(regs, d.rd, 1 if regs[d.rs1] < regs[d.rs2] else 0)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sll(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] << (regs[d.rs2] & 63))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_srl(d, pc, regs, mem):
     _write(regs, d.rd, regs[d.rs1] >> (regs[d.rs2] & 63))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sra(d, pc, regs, mem):
     _write(regs, d.rd, _signed64(regs[d.rs1]) >> (regs[d.rs2] & 63))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 # OP-32
 def _h_addw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32((regs[d.rs1] + regs[d.rs2]) & MASK32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_subw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32((regs[d.rs1] - regs[d.rs2]) & MASK32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sllw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32((regs[d.rs1] << (regs[d.rs2] & 31)) & MASK32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_srlw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32(((regs[d.rs1] & MASK32) >> (regs[d.rs2] & 31)) & MASK32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sraw(d, pc, regs, mem):
     lo = _signed32(regs[d.rs1])
     _write(regs, d.rd, _sext32((lo >> (regs[d.rs2] & 31)) & MASK32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 # M extension — mirrors rotor/btor2/riscv/isa.py's RISC-V spec edge
@@ -269,7 +272,7 @@ def _trunc_div(a: int, b: int) -> int:
 
 def _h_mul(d, pc, regs, mem):
     _write(regs, d.rd, (regs[d.rs1] * regs[d.rs2]) & MASK)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_mulh_common(d, regs, *, sign_a: bool, sign_b: bool) -> int:
@@ -281,29 +284,29 @@ def _h_mulh_common(d, regs, *, sign_a: bool, sign_b: bool) -> int:
 
 def _h_mulh(d, pc, regs, mem):
     _write(regs, d.rd, _h_mulh_common(d, regs, sign_a=True, sign_b=True))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_mulhsu(d, pc, regs, mem):
     _write(regs, d.rd, _h_mulh_common(d, regs, sign_a=True, sign_b=False))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_mulhu(d, pc, regs, mem):
     _write(regs, d.rd, _h_mulh_common(d, regs, sign_a=False, sign_b=False))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_divu(d, pc, regs, mem):
     a, b = regs[d.rs1], regs[d.rs2]
     _write(regs, d.rd, MASK if b == 0 else (a // b) & MASK)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_remu(d, pc, regs, mem):
     a, b = regs[d.rs1], regs[d.rs2]
     _write(regs, d.rd, a if b == 0 else (a % b) & MASK)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_div(d, pc, regs, mem):
@@ -315,7 +318,7 @@ def _h_div(d, pc, regs, mem):
     else:
         result = _trunc_div(a, b) & MASK
     _write(regs, d.rd, result)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_rem(d, pc, regs, mem):
@@ -327,28 +330,28 @@ def _h_rem(d, pc, regs, mem):
     else:
         result = (a - _trunc_div(a, b) * b) & MASK
     _write(regs, d.rd, result)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 # OP-32 M (sign-extended 32-bit results)
 
 def _h_mulw(d, pc, regs, mem):
     _write(regs, d.rd, _sext32((regs[d.rs1] * regs[d.rs2]) & MASK32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_divuw(d, pc, regs, mem):
     a, b = regs[d.rs1] & MASK32, regs[d.rs2] & MASK32
     r32 = MASK32 if b == 0 else (a // b) & MASK32
     _write(regs, d.rd, _sext32(r32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_remuw(d, pc, regs, mem):
     a, b = regs[d.rs1] & MASK32, regs[d.rs2] & MASK32
     r32 = a if b == 0 else (a % b) & MASK32
     _write(regs, d.rd, _sext32(r32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_divw(d, pc, regs, mem):
@@ -360,7 +363,7 @@ def _h_divw(d, pc, regs, mem):
     else:
         r32 = _trunc_div(a, b) & MASK32
     _write(regs, d.rd, _sext32(r32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_remw(d, pc, regs, mem):
@@ -372,53 +375,53 @@ def _h_remw(d, pc, regs, mem):
     else:
         r32 = (a - _trunc_div(a, b) * b) & MASK32
     _write(regs, d.rd, _sext32(r32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 # Branches
 def _h_beq(d, pc, regs, mem):
-    return (pc + d.imm) & MASK if regs[d.rs1] == regs[d.rs2] else (pc + 4) & MASK
+    return (pc + d.imm) & MASK if regs[d.rs1] == regs[d.rs2] else (pc + d.size) & MASK
 
 
 def _h_bne(d, pc, regs, mem):
-    return (pc + d.imm) & MASK if regs[d.rs1] != regs[d.rs2] else (pc + 4) & MASK
+    return (pc + d.imm) & MASK if regs[d.rs1] != regs[d.rs2] else (pc + d.size) & MASK
 
 
 def _h_blt(d, pc, regs, mem):
-    return (pc + d.imm) & MASK if _signed64(regs[d.rs1]) < _signed64(regs[d.rs2]) else (pc + 4) & MASK
+    return (pc + d.imm) & MASK if _signed64(regs[d.rs1]) < _signed64(regs[d.rs2]) else (pc + d.size) & MASK
 
 
 def _h_bge(d, pc, regs, mem):
-    return (pc + d.imm) & MASK if _signed64(regs[d.rs1]) >= _signed64(regs[d.rs2]) else (pc + 4) & MASK
+    return (pc + d.imm) & MASK if _signed64(regs[d.rs1]) >= _signed64(regs[d.rs2]) else (pc + d.size) & MASK
 
 
 def _h_bltu(d, pc, regs, mem):
-    return (pc + d.imm) & MASK if regs[d.rs1] < regs[d.rs2] else (pc + 4) & MASK
+    return (pc + d.imm) & MASK if regs[d.rs1] < regs[d.rs2] else (pc + d.size) & MASK
 
 
 def _h_bgeu(d, pc, regs, mem):
-    return (pc + d.imm) & MASK if regs[d.rs1] >= regs[d.rs2] else (pc + 4) & MASK
+    return (pc + d.imm) & MASK if regs[d.rs1] >= regs[d.rs2] else (pc + d.size) & MASK
 
 
 # U / J
 def _h_lui(d, pc, regs, mem):
     _write(regs, d.rd, d.imm)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_auipc(d, pc, regs, mem):
     _write(regs, d.rd, (pc + d.imm) & MASK)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_jal(d, pc, regs, mem):
-    _write(regs, d.rd, (pc + 4) & MASK)
+    _write(regs, d.rd, (pc + d.size) & MASK)
     return (pc + d.imm) & MASK
 
 
 def _h_jalr(d, pc, regs, mem):
     target = ((regs[d.rs1] + d.imm) & MASK) & ~1
-    _write(regs, d.rd, (pc + 4) & MASK)
+    _write(regs, d.rd, (pc + d.size) & MASK)
     return target
 
 
@@ -446,65 +449,65 @@ def _sext_n(value: int, nbits: int) -> int:
 def _h_lb(d, pc, regs, mem):
     v = _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 1)
     _write(regs, d.rd, _sext_n(v, 8))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_lh(d, pc, regs, mem):
     v = _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 2)
     _write(regs, d.rd, _sext_n(v, 16))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_lw(d, pc, regs, mem):
     v = _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 4)
     _write(regs, d.rd, _sext_n(v, 32))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_ld(d, pc, regs, mem):
     v = _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 8)
     _write(regs, d.rd, v)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_lbu(d, pc, regs, mem):
     _write(regs, d.rd, _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 1))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_lhu(d, pc, regs, mem):
     _write(regs, d.rd, _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 2))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_lwu(d, pc, regs, mem):
     _write(regs, d.rd, _read_bytes(mem, (regs[d.rs1] + d.imm) & MASK, 4))
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sb(d, pc, regs, mem):
     _write_bytes(mem, (regs[d.rs1] + d.imm) & MASK, regs[d.rs2], 1)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sh(d, pc, regs, mem):
     _write_bytes(mem, (regs[d.rs1] + d.imm) & MASK, regs[d.rs2], 2)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sw(d, pc, regs, mem):
     _write_bytes(mem, (regs[d.rs1] + d.imm) & MASK, regs[d.rs2], 4)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_sd(d, pc, regs, mem):
     _write_bytes(mem, (regs[d.rs1] + d.imm) & MASK, regs[d.rs2], 8)
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 # Misc
 def _h_fence(d, pc, regs, mem):
-    return (pc + 4) & MASK
+    return (pc + d.size) & MASK
 
 
 def _h_halt(d, pc, regs, mem):

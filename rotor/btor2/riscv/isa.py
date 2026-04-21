@@ -64,8 +64,8 @@ def _write(writes: dict[int, Node], rd: int, expr: Node) -> None:
         writes[rd] = expr
 
 
-def _fall(pc_value: int, m: Model) -> Node:
-    return m.const(BV64, (pc_value + 4) & MASK64)
+def _fall(d: Decoded, pc_value: int, m: Model) -> Node:
+    return m.const(BV64, (pc_value + d.size) & MASK64)
 
 
 # ---------------------------------------------------------------------------
@@ -77,49 +77,49 @@ def _addi(d, pc_value, m, regs, mem):
     result = m.op("add", BV64, regs[d.rs1], imm)
     writes: dict[int, Node] = {}
     _write(writes, d.rd, result)
-    return writes, _fall(pc_value, m), None
+    return writes, _fall(d, pc_value, m), None
 
 
 def _xori(d, pc_value, m, regs, mem):
     imm = m.const(BV64, d.imm & MASK64)
-    return _i_writes(m, d, m.op("xor", BV64, regs[d.rs1], imm)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("xor", BV64, regs[d.rs1], imm)), _fall(d, pc_value, m), None
 
 
 def _ori(d, pc_value, m, regs, mem):
     imm = m.const(BV64, d.imm & MASK64)
-    return _i_writes(m, d, m.op("or", BV64, regs[d.rs1], imm)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("or", BV64, regs[d.rs1], imm)), _fall(d, pc_value, m), None
 
 
 def _andi(d, pc_value, m, regs, mem):
     imm = m.const(BV64, d.imm & MASK64)
-    return _i_writes(m, d, m.op("and", BV64, regs[d.rs1], imm)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("and", BV64, regs[d.rs1], imm)), _fall(d, pc_value, m), None
 
 
 def _slti(d, pc_value, m, regs, mem):
     imm = m.const(BV64, d.imm & MASK64)
     cond = m.op("slt", BV1, regs[d.rs1], imm)
-    return _i_writes(m, d, _bool_to_bv64(m, cond)), _fall(pc_value, m), None
+    return _i_writes(m, d, _bool_to_bv64(m, cond)), _fall(d, pc_value, m), None
 
 
 def _sltiu(d, pc_value, m, regs, mem):
     imm = m.const(BV64, d.imm & MASK64)
     cond = m.op("ult", BV1, regs[d.rs1], imm)
-    return _i_writes(m, d, _bool_to_bv64(m, cond)), _fall(pc_value, m), None
+    return _i_writes(m, d, _bool_to_bv64(m, cond)), _fall(d, pc_value, m), None
 
 
 def _slli(d, pc_value, m, regs, mem):
     shamt = m.const(BV64, d.imm & 63)
-    return _i_writes(m, d, m.op("sll", BV64, regs[d.rs1], shamt)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("sll", BV64, regs[d.rs1], shamt)), _fall(d, pc_value, m), None
 
 
 def _srli(d, pc_value, m, regs, mem):
     shamt = m.const(BV64, d.imm & 63)
-    return _i_writes(m, d, m.op("srl", BV64, regs[d.rs1], shamt)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("srl", BV64, regs[d.rs1], shamt)), _fall(d, pc_value, m), None
 
 
 def _srai(d, pc_value, m, regs, mem):
     shamt = m.const(BV64, d.imm & 63)
-    return _i_writes(m, d, m.op("sra", BV64, regs[d.rs1], shamt)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("sra", BV64, regs[d.rs1], shamt)), _fall(d, pc_value, m), None
 
 
 # ---------------------------------------------------------------------------
@@ -130,28 +130,28 @@ def _addiw(d, pc_value, m, regs, mem):
     lo1 = m.slice(regs[d.rs1], 31, 0)
     imm32 = m.const(BV32, d.imm & MASK32)
     sum32 = m.op("add", BV32, lo1, imm32)
-    return _i_writes(m, d, m.sext(sum32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(sum32, 32)), _fall(d, pc_value, m), None
 
 
 def _slliw(d, pc_value, m, regs, mem):
     lo1 = m.slice(regs[d.rs1], 31, 0)
     shamt = m.const(BV32, d.imm & 31)
     sh32 = m.op("sll", BV32, lo1, shamt)
-    return _i_writes(m, d, m.sext(sh32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(sh32, 32)), _fall(d, pc_value, m), None
 
 
 def _srliw(d, pc_value, m, regs, mem):
     lo1 = m.slice(regs[d.rs1], 31, 0)
     shamt = m.const(BV32, d.imm & 31)
     sh32 = m.op("srl", BV32, lo1, shamt)
-    return _i_writes(m, d, m.sext(sh32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(sh32, 32)), _fall(d, pc_value, m), None
 
 
 def _sraiw(d, pc_value, m, regs, mem):
     lo1 = m.slice(regs[d.rs1], 31, 0)
     shamt = m.const(BV32, d.imm & 31)
     sh32 = m.op("sra", BV32, lo1, shamt)
-    return _i_writes(m, d, m.sext(sh32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(sh32, 32)), _fall(d, pc_value, m), None
 
 
 # ---------------------------------------------------------------------------
@@ -159,48 +159,48 @@ def _sraiw(d, pc_value, m, regs, mem):
 # ---------------------------------------------------------------------------
 
 def _add(d, pc_value, m, regs, mem):
-    return _i_writes(m, d, m.op("add", BV64, regs[d.rs1], regs[d.rs2])), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("add", BV64, regs[d.rs1], regs[d.rs2])), _fall(d, pc_value, m), None
 
 
 def _sub(d, pc_value, m, regs, mem):
-    return _i_writes(m, d, m.op("sub", BV64, regs[d.rs1], regs[d.rs2])), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("sub", BV64, regs[d.rs1], regs[d.rs2])), _fall(d, pc_value, m), None
 
 
 def _and(d, pc_value, m, regs, mem):
-    return _i_writes(m, d, m.op("and", BV64, regs[d.rs1], regs[d.rs2])), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("and", BV64, regs[d.rs1], regs[d.rs2])), _fall(d, pc_value, m), None
 
 
 def _or(d, pc_value, m, regs, mem):
-    return _i_writes(m, d, m.op("or", BV64, regs[d.rs1], regs[d.rs2])), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("or", BV64, regs[d.rs1], regs[d.rs2])), _fall(d, pc_value, m), None
 
 
 def _xor(d, pc_value, m, regs, mem):
-    return _i_writes(m, d, m.op("xor", BV64, regs[d.rs1], regs[d.rs2])), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("xor", BV64, regs[d.rs1], regs[d.rs2])), _fall(d, pc_value, m), None
 
 
 def _slt(d, pc_value, m, regs, mem):
     cond = m.op("slt", BV1, regs[d.rs1], regs[d.rs2])
-    return _i_writes(m, d, _bool_to_bv64(m, cond)), _fall(pc_value, m), None
+    return _i_writes(m, d, _bool_to_bv64(m, cond)), _fall(d, pc_value, m), None
 
 
 def _sltu(d, pc_value, m, regs, mem):
     cond = m.op("ult", BV1, regs[d.rs1], regs[d.rs2])
-    return _i_writes(m, d, _bool_to_bv64(m, cond)), _fall(pc_value, m), None
+    return _i_writes(m, d, _bool_to_bv64(m, cond)), _fall(d, pc_value, m), None
 
 
 def _sll(d, pc_value, m, regs, mem):
     shamt = m.op("and", BV64, regs[d.rs2], m.const(BV64, 63))
-    return _i_writes(m, d, m.op("sll", BV64, regs[d.rs1], shamt)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("sll", BV64, regs[d.rs1], shamt)), _fall(d, pc_value, m), None
 
 
 def _srl(d, pc_value, m, regs, mem):
     shamt = m.op("and", BV64, regs[d.rs2], m.const(BV64, 63))
-    return _i_writes(m, d, m.op("srl", BV64, regs[d.rs1], shamt)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("srl", BV64, regs[d.rs1], shamt)), _fall(d, pc_value, m), None
 
 
 def _sra(d, pc_value, m, regs, mem):
     shamt = m.op("and", BV64, regs[d.rs2], m.const(BV64, 63))
-    return _i_writes(m, d, m.op("sra", BV64, regs[d.rs1], shamt)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("sra", BV64, regs[d.rs1], shamt)), _fall(d, pc_value, m), None
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ INT_MIN_32 = 1 << 31
 
 
 def _mul(d, pc_value, m, regs, mem):
-    return _i_writes(m, d, m.op("mul", BV64, regs[d.rs1], regs[d.rs2])), _fall(pc_value, m), None
+    return _i_writes(m, d, m.op("mul", BV64, regs[d.rs1], regs[d.rs2])), _fall(d, pc_value, m), None
 
 
 def _mulh_generic(d, pc_value, m, regs, mem, *, sign_a: bool, sign_b: bool):
@@ -237,7 +237,7 @@ def _mulh_generic(d, pc_value, m, regs, mem, *, sign_a: bool, sign_b: bool):
     b128 = m.sext(regs[d.rs2], 64) if sign_b else m.uext(regs[d.rs2], 64)
     prod = m.op("mul", BV128, a128, b128)
     hi = m.slice(prod, 127, 64)
-    return _i_writes(m, d, hi), _fall(pc_value, m), None
+    return _i_writes(m, d, hi), _fall(d, pc_value, m), None
 
 
 def _mulh(d, pc_value, m, regs, mem):
@@ -257,7 +257,7 @@ def _divu(d, pc_value, m, regs, mem):
     is_zero = m.op("eq", BV1, b, m.const(BV64, 0))
     raw = m.op("udiv", BV64, a, b)
     result = m.ite(is_zero, m.const(BV64, ALL_ONES_64), raw)
-    return _i_writes(m, d, result), _fall(pc_value, m), None
+    return _i_writes(m, d, result), _fall(d, pc_value, m), None
 
 
 def _remu(d, pc_value, m, regs, mem):
@@ -265,7 +265,7 @@ def _remu(d, pc_value, m, regs, mem):
     is_zero = m.op("eq", BV1, b, m.const(BV64, 0))
     raw = m.op("urem", BV64, a, b)
     result = m.ite(is_zero, a, raw)
-    return _i_writes(m, d, result), _fall(pc_value, m), None
+    return _i_writes(m, d, result), _fall(d, pc_value, m), None
 
 
 def _div(d, pc_value, m, regs, mem):
@@ -278,7 +278,7 @@ def _div(d, pc_value, m, regs, mem):
     overflow_result = m.const(BV64, INT_MIN_64)
     zero_result = m.const(BV64, ALL_ONES_64)
     result = m.ite(is_zero, zero_result, m.ite(is_overflow, overflow_result, raw))
-    return _i_writes(m, d, result), _fall(pc_value, m), None
+    return _i_writes(m, d, result), _fall(d, pc_value, m), None
 
 
 def _rem(d, pc_value, m, regs, mem):
@@ -289,7 +289,7 @@ def _rem(d, pc_value, m, regs, mem):
     is_overflow = m.op("and", BV1, is_int_min, is_minus_one)
     raw = m.op("srem", BV64, a, b)
     result = m.ite(is_zero, a, m.ite(is_overflow, m.const(BV64, 0), raw))
-    return _i_writes(m, d, result), _fall(pc_value, m), None
+    return _i_writes(m, d, result), _fall(d, pc_value, m), None
 
 
 # ---------------------------------------------------------------------------
@@ -300,14 +300,14 @@ def _addw(d, pc_value, m, regs, mem):
     lo1 = m.slice(regs[d.rs1], 31, 0)
     lo2 = m.slice(regs[d.rs2], 31, 0)
     sum32 = m.op("add", BV32, lo1, lo2)
-    return _i_writes(m, d, m.sext(sum32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(sum32, 32)), _fall(d, pc_value, m), None
 
 
 def _subw(d, pc_value, m, regs, mem):
     lo1 = m.slice(regs[d.rs1], 31, 0)
     lo2 = m.slice(regs[d.rs2], 31, 0)
     diff32 = m.op("sub", BV32, lo1, lo2)
-    return _i_writes(m, d, m.sext(diff32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(diff32, 32)), _fall(d, pc_value, m), None
 
 
 def _sllw(d, pc_value, m, regs, mem):
@@ -315,7 +315,7 @@ def _sllw(d, pc_value, m, regs, mem):
     lo2 = m.slice(regs[d.rs2], 31, 0)
     shamt = m.op("and", BV32, lo2, m.const(BV32, 31))
     sh32 = m.op("sll", BV32, lo1, shamt)
-    return _i_writes(m, d, m.sext(sh32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(sh32, 32)), _fall(d, pc_value, m), None
 
 
 def _srlw(d, pc_value, m, regs, mem):
@@ -323,7 +323,7 @@ def _srlw(d, pc_value, m, regs, mem):
     lo2 = m.slice(regs[d.rs2], 31, 0)
     shamt = m.op("and", BV32, lo2, m.const(BV32, 31))
     sh32 = m.op("srl", BV32, lo1, shamt)
-    return _i_writes(m, d, m.sext(sh32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(sh32, 32)), _fall(d, pc_value, m), None
 
 
 def _sraw(d, pc_value, m, regs, mem):
@@ -331,7 +331,7 @@ def _sraw(d, pc_value, m, regs, mem):
     lo2 = m.slice(regs[d.rs2], 31, 0)
     shamt = m.op("and", BV32, lo2, m.const(BV32, 31))
     sh32 = m.op("sra", BV32, lo1, shamt)
-    return _i_writes(m, d, m.sext(sh32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(sh32, 32)), _fall(d, pc_value, m), None
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +344,7 @@ def _mulw(d, pc_value, m, regs, mem):
     lo1 = m.slice(regs[d.rs1], 31, 0)
     lo2 = m.slice(regs[d.rs2], 31, 0)
     prod32 = m.op("mul", BV32, lo1, lo2)
-    return _i_writes(m, d, m.sext(prod32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(prod32, 32)), _fall(d, pc_value, m), None
 
 
 def _divuw(d, pc_value, m, regs, mem):
@@ -353,7 +353,7 @@ def _divuw(d, pc_value, m, regs, mem):
     is_zero = m.op("eq", BV1, lo2, m.const(BV32, 0))
     raw = m.op("udiv", BV32, lo1, lo2)
     result32 = m.ite(is_zero, m.const(BV32, ALL_ONES_32), raw)
-    return _i_writes(m, d, m.sext(result32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(result32, 32)), _fall(d, pc_value, m), None
 
 
 def _remuw(d, pc_value, m, regs, mem):
@@ -362,7 +362,7 @@ def _remuw(d, pc_value, m, regs, mem):
     is_zero = m.op("eq", BV1, lo2, m.const(BV32, 0))
     raw = m.op("urem", BV32, lo1, lo2)
     result32 = m.ite(is_zero, lo1, raw)
-    return _i_writes(m, d, m.sext(result32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(result32, 32)), _fall(d, pc_value, m), None
 
 
 def _divw(d, pc_value, m, regs, mem):
@@ -377,7 +377,7 @@ def _divw(d, pc_value, m, regs, mem):
         is_zero, m.const(BV32, ALL_ONES_32),
         m.ite(is_overflow, m.const(BV32, INT_MIN_32), raw),
     )
-    return _i_writes(m, d, m.sext(result32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(result32, 32)), _fall(d, pc_value, m), None
 
 
 def _remw(d, pc_value, m, regs, mem):
@@ -392,7 +392,7 @@ def _remw(d, pc_value, m, regs, mem):
         is_zero, lo1,
         m.ite(is_overflow, m.const(BV32, 0), raw),
     )
-    return _i_writes(m, d, m.sext(result32, 32)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.sext(result32, 32)), _fall(d, pc_value, m), None
 
 
 # ---------------------------------------------------------------------------
@@ -403,19 +403,19 @@ def _branch(opname: str):
     def lower_fn(d, pc_value, m, regs, mem):
         cond = m.op(opname, BV1, regs[d.rs1], regs[d.rs2])
         target = m.const(BV64, (pc_value + d.imm) & MASK64)
-        fall = _fall(pc_value, m)
+        fall = _fall(d, pc_value, m)
         return {}, m.ite(cond, target, fall), None
     return lower_fn
 
 
 def _beq(d, pc_value, m, regs, mem):
     cond = m.op("eq", BV1, regs[d.rs1], regs[d.rs2])
-    return {}, m.ite(cond, m.const(BV64, (pc_value + d.imm) & MASK64), _fall(pc_value, m)), None
+    return {}, m.ite(cond, m.const(BV64, (pc_value + d.imm) & MASK64), _fall(d, pc_value, m)), None
 
 
 def _bne(d, pc_value, m, regs, mem):
     cond = m.op("neq", BV1, regs[d.rs1], regs[d.rs2])
-    return {}, m.ite(cond, m.const(BV64, (pc_value + d.imm) & MASK64), _fall(pc_value, m)), None
+    return {}, m.ite(cond, m.const(BV64, (pc_value + d.imm) & MASK64), _fall(d, pc_value, m)), None
 
 
 _blt  = _branch("slt")
@@ -430,11 +430,11 @@ _bgeu = _branch("ugte")
 
 def _lui(d, pc_value, m, regs, mem):
     # Decoder already sign-extended imm to 64 bits.
-    return _i_writes(m, d, m.const(BV64, d.imm & MASK64)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.const(BV64, d.imm & MASK64)), _fall(d, pc_value, m), None
 
 
 def _auipc(d, pc_value, m, regs, mem):
-    return _i_writes(m, d, m.const(BV64, (pc_value + d.imm) & MASK64)), _fall(pc_value, m), None
+    return _i_writes(m, d, m.const(BV64, (pc_value + d.imm) & MASK64)), _fall(d, pc_value, m), None
 
 
 def _jal(d, pc_value, m, regs, mem):
@@ -497,7 +497,7 @@ def _load(width: int, signed: bool):
             result = m.sext(value, 64 - 8 * width)
         else:
             result = m.uext(value, 64 - 8 * width)
-        return _i_writes(m, d, result), _fall(pc_value, m), None
+        return _i_writes(m, d, result), _fall(d, pc_value, m), None
     return lower_fn
 
 
@@ -522,7 +522,7 @@ def _store(nbytes: int):
             else:
                 a = m.op("add", BV64, addr, m.const(BV64, i & MASK64))
             new_mem = m.write(new_mem, a, byte_i)
-        return {}, _fall(pc_value, m), new_mem
+        return {}, _fall(d, pc_value, m), new_mem
     return lower_fn
 
 
@@ -537,7 +537,7 @@ _sd = _store(8)
 # ---------------------------------------------------------------------------
 
 def _fence(d, pc_value, m, regs, mem):
-    return {}, _fall(pc_value, m), None            # safe approximation: no-op
+    return {}, _fall(d, pc_value, m), None            # safe approximation: no-op
 
 
 def _halt(d, pc_value, m, regs, mem):

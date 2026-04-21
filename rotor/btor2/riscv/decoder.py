@@ -54,6 +54,7 @@ class Decoded:
     rs1: int
     rs2: int               # unused for I/U/J types — kept for shape uniformity
     imm: int               # sign-extended where applicable; shamt for shifts
+    size: int = 4          # 2 for RVC (compressed), 4 for RV64I/M
 
 
 # ---------------------------------------------------------------------------

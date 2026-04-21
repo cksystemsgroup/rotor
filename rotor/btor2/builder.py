@@ -46,6 +46,7 @@ bugs rather than masking them.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Optional
 
 from rotor.binary import Function, RISCVBinary
@@ -137,6 +138,8 @@ def build_reach(
         d = decode(inst.word)
         if d is None:
             raise UnsupportedInstruction(inst.pc, inst.word)
+        if inst.size != d.size:                    # stamp RVC size on Decoded
+            d = dataclasses.replace(d, size=inst.size)
         decoded.append((inst, d))
     uses_memory = any(d.mnem in MEMORY_MNEMONICS for _, d in decoded)
 

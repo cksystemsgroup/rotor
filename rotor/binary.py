@@ -32,7 +32,9 @@ class Function:
 @dataclass(frozen=True)
 class Instruction:
     pc: int
-    word: int    # 32-bit RISC-V instruction word
+    word: int            # 32-bit RISC-V instruction word (for RVC:
+                         # expanded equivalent — see rotor.btor2.riscv.rvc)
+    size: int = 4        # 2 for compressed (RVC), 4 for RV64I/M
 
 
 class RISCVBinary:
