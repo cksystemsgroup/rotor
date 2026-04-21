@@ -13,12 +13,14 @@ added by implementing BTOR2Emitter against the same QuestionSpec.
 from rotor.ir.dag import DagBuilder
 from rotor.ir.emitter import BTOR2Emitter, DagEmitter, IdentityEmitter, emit_btor2_bytes
 from rotor.ir.spec import QuestionSpec, ReachSpec
+from rotor.ir.ssa import SsaEmitter
 
 __all__ = [
     "BTOR2Emitter",
     "IdentityEmitter",
     "DagEmitter",
     "DagBuilder",
+    "SsaEmitter",
     "emit_btor2_bytes",
     "QuestionSpec",
     "ReachSpec",

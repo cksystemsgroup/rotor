@@ -6,12 +6,12 @@ a handful of iterations. The `reachable` test confirms that when the
 abstract CEX is real, concrete replay identifies it and CEGAR reports
 the real step.
 
-`bounded_counter` exceeds Spacer under the current L0 encoding — the
-loop invariant lives in the fanin of several registers and the
-abstract Spacer call exceeds its timeout budget regardless of how
-many registers CEGAR unhavocs. M8's goal-directed SSA slicing is
-the designed fix: it will collapse the PDR state space to just the
-registers the property actually reads. Test skipped with that note.
+`bounded_counter` remains beyond Spacer even after M8's L2 slicing
+collapsed the PDR state to {pc, ra, a0, a1}. The hurdle is loop-
+invariant inference over the bitvector loop body, which neither
+slicing nor register-level abstraction can shrink. Test stays
+skipped with a note pointing at BVDD (M9), external IC3 bridges,
+or predicate abstraction as the next candidates.
 """
 
 from __future__ import annotations
@@ -56,7 +56,14 @@ def test_cegar_detects_real_reachability_on_live_path() -> None:
     assert r.step is not None and r.step > 0
 
 
-@pytest.mark.skip(reason="bounded_counter exceeds Spacer under CEGAR abstraction; unblocked by M8 slicing")
+@pytest.mark.skip(reason=(
+    "Spacer exceeds timeout on bounded_counter even with M8's L2 "
+    "slicing (pc + 3 regs). The remaining hurdle is loop-invariant "
+    "inference over bitvector arithmetic; slicing removes state "
+    "dimensions but cannot shrink the loop body. Candidate "
+    "follow-ups: BVDD frame representation (M9), external IC3 "
+    "bridges (rIC3), or predicate abstraction in CEGAR."
+))
 def test_cegar_proves_bounded_counter_safe() -> None:
     with RISCVBinary(FIXTURE) as b:
         r = cegar_reach(

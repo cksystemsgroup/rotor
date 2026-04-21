@@ -215,11 +215,19 @@ structural. This is the classic symbolic-executor IR (angr/Claripy, KLEE).
 
 ### L2 — SSA-BV
 
-The DAG, lifted to SSA over bitvector values: one definition per
-instruction, φ-nodes at CFG joins, dominator information, def-use chains.
-Unlocks goal-directed BTOR2 slicing (only emit obligations reachable from
-the property), higher-quality IC3 transition relations, and cleaner DWARF
-lifting because SSA defs align naturally with source variables.
+Register-level goal-directed slicing. A backward liveness analysis
+classifies each architectural register as either live for the
+current reach question (its value can flow into the `bad` expression
+via a branch or jalr) or dead. The dead registers are then havoc'd
+in the BTOR2 output, collapsing the PDR state dimension that
+unbounded engines reason over and shrinking the Model's node count.
+
+The richer SSA structure the plan anticipates — per-instruction defs,
+φ-nodes at CFG joins, dominator information, def-use chains — is
+future work. It unlocks instruction-level slicing (dropping
+instructions that only write dead registers), but that changes BMC
+step counts and so requires an evolution of the L0-equivalence
+harness contract before it can ship.
 
 ### L3 — BVDD
 

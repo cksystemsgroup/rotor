@@ -64,7 +64,8 @@ rotor/
 │   │   ├── protocols.py         ← capability protocols
 │   │   ├── emitter.py           ← BTOR2Emitter Protocol + IdentityEmitter
 │   │   ├── dag.py               ← L1: BV expression DAG
-│   │   ├── ssa.py               ← L2: SSA-BV
+│   │   ├── liveness.py          ← L2: register liveness analysis
+│   │   ├── ssa.py               ← L2: liveness-sliced emitter
 │   │   └── bvdd.py              ← L3: BVDD (pure Python; Rust via PyO3 later)
 │   ├── cegar.py                 ← Phase 6: CEGAR loop over Z3Spacer + witness
 │   ├── instance.py              ← L0: RotorInstance (one obligation)
@@ -93,7 +94,7 @@ rotor/
 |---|---|---|---|
 | **L0** | BTOR2 compiler + solver dispatcher + DWARF lift | All API verbs answer end-to-end on the corpus | Integration tests on fixture binaries |
 | **L1** | BV expression DAG: const fold, CSE, DCE | Passes L0-equivalence on full corpus | L0-equivalence harness |
-| **L2** | SSA-BV: φ, dominators, slicing | Passes L0-equivalence + slicing metrics | L0-equivalence harness |
+| **L2** | SSA-BV: register liveness → goal-directed slicing (φ / dominators are future work) | Passes L0-equivalence + slicing metrics | L0-equivalence harness |
 | **L3** | BVDD: set-theoretic ops for IC3 frames / equivalence products | Passes L0-equivalence + frame algebra tests | L0-equivalence harness |
 
 Each layer is independently benchmarked against L0 on a fixed corpus.
@@ -432,16 +433,25 @@ reduction on at least 50% of corpus cases.
 
 ## L2: SSA-BV
 
-**Deliverable:** `rotor/ir/ssa.py`.
+**Deliverable:** `rotor/ir/ssa.py`, `rotor/ir/liveness.py`.
 
-- SSA IR layered on L1's DAG: per-instruction def, φ at joins, dominator
-  tree, def-use chains.
-- Goal-directed slicing: walk def-use backward from the property; emit
-  only reachable defs into BTOR2.
-- DWARF provenance on SSA defs (attach location info at definition,
-  propagate through φ).
-- IC3-friendly transition relation: declare per-register next-state
-  functions explicitly, avoid unnecessary quantification.
+- **Register-level liveness slicing (shipping).** A flow-insensitive
+  backward analysis (`rotor/ir/liveness.py`) classifies each register
+  as live-for-reachability (its value can flow into the `bad`
+  property via branches / jalr) or dead. `SsaEmitter` wraps `L1`'s
+  DAG builder with `havoc_regs = dead_registers(...)`, collapsing
+  the PDR state dimension for unbounded engines and trimming BTOR2
+  node count. Exit criterion met on the current corpus.
+- **Planned deeper structure (future work).** Per-instruction defs,
+  φ-nodes at joins, dominator tree, explicit def-use chains, and
+  DWARF-provenance propagation through φ. These enable
+  instruction-level slicing (dropping instructions whose only
+  effect is writing a dead register) and are prerequisites for
+  IC3 predicate inference on strongly-typed SSA values. They do
+  not ship in the current M8 because the L0-equivalence harness
+  asserts BMC step counts match — instruction-level slicing
+  changes step counts, so the harness contract must evolve
+  before that slicing can land.
 
 **Exit criterion:** L0-equivalence; IC3 solve-time improvement on frame-
 heavy benchmarks.
