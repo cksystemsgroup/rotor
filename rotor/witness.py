@@ -507,6 +507,11 @@ def _h_fence(d, pc, regs, mem):
     return (pc + 4) & MASK
 
 
+def _h_halt(d, pc, regs, mem):
+    """ECALL / EBREAK: self-loop at the instruction (see isa.py::_halt)."""
+    return pc
+
+
 _STEP: dict[str, Callable[[Decoded, int, list[int], dict[int, int]], int]] = {
     "addi": _h_addi, "slti": _h_slti, "sltiu": _h_sltiu,
     "xori": _h_xori, "ori": _h_ori, "andi": _h_andi,
@@ -529,4 +534,5 @@ _STEP: dict[str, Callable[[Decoded, int, list[int], dict[int, int]], int]] = {
     "mulw": _h_mulw, "divw": _h_divw, "divuw": _h_divuw,
     "remw": _h_remw, "remuw": _h_remuw,
     "fence": _h_fence,
+    "ecall": _h_halt, "ebreak": _h_halt,
 }

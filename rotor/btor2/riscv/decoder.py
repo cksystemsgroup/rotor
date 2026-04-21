@@ -44,6 +44,7 @@ _JALR         = 0b1100111
 _LOAD         = 0b0000011
 _STORE        = 0b0100011
 _MISC_MEM     = 0b0001111
+_SYSTEM       = 0b1110011
 
 
 @dataclass(frozen=True)
@@ -248,6 +249,23 @@ def _decode_misc_mem(word: int) -> Optional[Decoded]:
     return None
 
 
+def _decode_system(word: int) -> Optional[Decoded]:
+    # ECALL / EBREAK only. The I-type immediate field distinguishes
+    # them: 0 → ecall, 1 → ebreak. CSR instructions are out of scope
+    # (no privileged-mode modeling) and return None to keep the
+    # decoder conservative.
+    if _funct3(word) != 0b000:
+        return None
+    if _rd(word) != 0 or _rs1(word) != 0:
+        return None
+    imm = _bits(word, 31, 20)
+    if imm == 0:
+        return Decoded("ecall", 0, 0, 0, 0)
+    if imm == 1:
+        return Decoded("ebreak", 0, 0, 0, 0)
+    return None
+
+
 def _decode_load(word: int) -> Optional[Decoded]:
     rd, funct3, rs1 = _rd(word), _funct3(word), _rs1(word)
     imm = _sext(_bits(word, 31, 20), 12)
@@ -293,6 +311,7 @@ _OPCODE_TABLE = {
     _LOAD:      _decode_load,
     _STORE:     _decode_store,
     _MISC_MEM:  _decode_misc_mem,
+    _SYSTEM:    _decode_system,
 }
 
 

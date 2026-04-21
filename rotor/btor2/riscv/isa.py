@@ -540,6 +540,20 @@ def _fence(d, pc_value, m, regs, mem):
     return {}, _fall(pc_value, m), None            # safe approximation: no-op
 
 
+def _halt(d, pc_value, m, regs, mem):
+    """ECALL / EBREAK: halt the machine cleanly by self-looping PC.
+
+    Rotor does not model syscalls or the debug trap, so the most
+    honest semantics is "execution stops here." PC becomes a self-
+    loop at the instruction's own address; any PC after this
+    instruction is unreachable from this path, which is what a real
+    unreturned syscall or unhandled breakpoint would produce. Full
+    syscall modeling (matching selfie's selfie convention) is in
+    scope for a later phase.
+    """
+    return {}, m.const(BV64, pc_value), None
+
+
 # ---------------------------------------------------------------------------
 
 def _i_writes(m: Model, d: Decoded, result: Node) -> dict[int, Node]:
@@ -635,4 +649,7 @@ DISPATCH: dict[str, LowerFn] = {
     "remuw":  _remuw,
     # Misc
     "fence": _fence,
+    # System — halt-like semantics (pc self-loops; no register/memory effects).
+    "ecall":  _halt,
+    "ebreak": _halt,
 }

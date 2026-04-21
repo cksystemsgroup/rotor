@@ -85,7 +85,14 @@ fails on `decode() is None`.
    classification. Fixture: `mult.elf` built with `-march=rv64im`.
    Exercised across both Z3 and Bitwuzla backends via the
    L0-equivalence harness on SsaEmitter / DagEmitter / IdentityEmitter.
-2. **ecall/ebreak stubs.** ⏳ Pending (B.2).
+2. **ecall/ebreak stubs.** ✅ **Shipped (B.2).** SYSTEM opcode
+   decoded for `ecall` (imm=0) and `ebreak` (imm=1); other SYSTEM
+   instructions (CSR, sret, mret, wfi) deliberately return None
+   until a privileged-mode model exists. Lowering: halt the machine
+   cleanly by self-looping PC at the instruction's own address
+   — no register writes, no memory writes. Honest semantics
+   without a syscall model: any PC after a halt is correctly
+   `unreachable` on that path.
 3. **RVC (compressed).** ⏳ Pending (B.3). The biggest lift —
    variable-length encoding requires reshaping the instruction-
    stream scanner.
