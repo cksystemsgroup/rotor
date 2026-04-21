@@ -73,6 +73,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Target PC as hex (e.g. 0x100b4) or decimal.")
     rc.add_argument("--bound", type=int, default=20,
                     help="BMC unroll bound (default: 20).")
+    mode = rc.add_mutually_exclusive_group()
+    mode.add_argument("--unbounded", action="store_true",
+                      help="Use Z3 Spacer (PDR/IC3) instead of bounded BMC. "
+                           "May answer `proved` with an inductive invariant.")
+    mode.add_argument("--cegar", action="store_true",
+                      help="Use counterexample-guided abstraction refinement. "
+                           "Starts with every register havoc'd and refines on "
+                           "spurious counterexamples.")
     rc.add_argument("--trace", type=Path,
                     help="Write counterexample markdown to this path "
                          "instead of stderr.")
@@ -164,7 +172,13 @@ def cmd_disasm(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
 def cmd_reach(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
     target = _parse_int(args.target)
     with RotorAPI(args.elf, default_bound=args.bound) as api:
-        r = api.can_reach(function=args.function, target_pc=target, bound=args.bound)
+        if args.cegar:
+            r = api.cegar_reach(function=args.function, target_pc=target)
+        else:
+            r = api.can_reach(
+                function=args.function, target_pc=target,
+                bound=args.bound, unbounded=args.unbounded,
+            )
 
     print(f"verdict  : {r.verdict}", file=out)
     print(f"bound    : {r.bound}", file=out)

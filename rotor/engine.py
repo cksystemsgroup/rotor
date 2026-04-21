@@ -22,6 +22,14 @@ from rotor.ir.spec import ReachSpec
 from rotor.solvers.base import SolverBackend, SolverResult
 from rotor.solvers.portfolio import Portfolio
 from rotor.solvers.z3bv import Z3BMC
+from rotor.solvers.z3spacer import Z3Spacer
+
+# cegar imported after rotor.ir to avoid a circular-import race:
+# cegar → rotor.btor2.builder → rotor.ir.spec, while rotor.ir.__init__
+# also triggers rotor.btor2.builder via ir.emitter. Loading rotor.ir
+# first ensures rotor.ir.spec is in sys.modules before the builder
+# cycle kicks in.
+from rotor.cegar import CegarConfig, cegar_reach
 
 
 @dataclass
@@ -69,3 +77,40 @@ class RotorEngine:
             bound=bound if bound is not None else self.config.default_bound,
             timeout=timeout if timeout is not None else self.config.default_timeout,
         )
+
+    def check_reach_unbounded(
+        self,
+        function: str,
+        target_pc: int,
+        timeout: Optional[float] = None,
+    ) -> SolverResult:
+        """Unbounded reachability via Z3 Spacer (PDR/IC3).
+
+        Ignores the engine's configured backend / portfolio / bound —
+        this is an explicit PDR call. Returns `proved` with invariant,
+        `reachable` with no step info (Spacer's Python API doesn't
+        surface CEX traces), or `unknown`.
+        """
+        spec = ReachSpec(function=function, target_pc=target_pc)
+        model = self._emitter.emit(spec)
+        return Z3Spacer().check_reach(
+            model,
+            bound=0,
+            timeout=timeout if timeout is not None else self.config.default_timeout,
+        )
+
+    def check_reach_cegar(
+        self,
+        function: str,
+        target_pc: int,
+        config: Optional[CegarConfig] = None,
+    ) -> SolverResult:
+        """CEGAR-driven reachability.
+
+        Starts with every register havoc'd; iteratively refines the
+        abstraction using Z3Spacer + concrete witness replay until
+        converged. Bypasses the configured emitter — CEGAR drives
+        build_reach directly so it can vary havoc_regs per iteration.
+        """
+        spec = ReachSpec(function=function, target_pc=target_pc)
+        return cegar_reach(self.binary, spec, config)

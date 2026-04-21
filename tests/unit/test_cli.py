@@ -80,6 +80,21 @@ def test_reach_writes_trace_to_file(tmp_path: Path) -> None:
     assert "# Counterexample" in trace_path.read_text()
 
 
+def test_reach_unbounded_and_cegar_are_mutually_exclusive(capsys) -> None:
+    import pytest as _pytest
+    with _pytest.raises(SystemExit) as exc_info:
+        main(
+            ["reach", FIXTURE,
+             "--function", "add2",
+             "--target", "0x100b4",
+             "--unbounded", "--cegar"],
+        )
+    assert exc_info.value.code == 2
+    # argparse writes its error to real stderr via sys.stderr; capsys
+    # captures that stream rather than our StringIO redirect.
+    assert "not allowed" in capsys.readouterr().err
+
+
 # ---------------------------------------------------------------- BTOR2 subcommands
 
 
