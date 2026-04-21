@@ -72,32 +72,54 @@ def build_reach(
     binary: RISCVBinary,
     spec: ReachSpec,
     builder: Optional[Model] = None,
+    havoc_regs: Optional[set[int]] = None,
 ) -> Model:
     """Compile a ReachSpec into a BTOR2 Model.
 
     `builder`, when provided, must be Model-compatible. IR layers pass a
     hash-consing / simplifying subclass; L0 uses a plain Model.
+
+    `havoc_regs`, when non-empty, is the CEGAR abstraction primitive:
+    each register index in the set is replaced by a per-cycle BTOR2
+    `input` instead of a `state` with computed next-state. Reads see
+    a fresh symbolic value every cycle; writes are dropped. This
+    over-approximates real behavior — any trace in the concrete model
+    is still a trace here, but the abstraction admits extra traces
+    where the register's value diverges from its computed semantics.
+    Rotor's CEGAR loop (rotor/cegar.py) drives refinement by removing
+    registers from this set one counterexample at a time. `x0` and
+    `pc` are never havoc'd; the entry-state ra-outside-fn constraint
+    is elided when ra (x1) is havoc'd, since the over-approximation
+    already admits the path the constraint would have blocked.
     """
     fn = binary.function(spec.function)
     m = builder if builder is not None else Model()
+    havoc = set(havoc_regs) if havoc_regs else set()
+    havoc.discard(0)                              # x0 is a constant, never havoc'd
 
-    # Register file: x0 is a constant 0; x1..x31 are free initial states.
+    # Register file: x0 is a constant 0; x1..x31 are free initial states
+    # (or per-cycle havoc inputs if the caller requested it).
     zero = m.const(BV64, 0)
     regs: list[Node] = [zero]
     for i in range(1, NREGS):
-        regs.append(m.state(BV64, f"x{i}"))
+        if i in havoc:
+            regs.append(m.input(BV64, f"x{i}"))
+        else:
+            regs.append(m.state(BV64, f"x{i}"))
 
     # Entry assumption: ra (x1) is a caller's return address, so its
     # (bit-0-masked) value must lie outside the function's PC range.
     # Without this, a `ret` with adversarially-chosen ra jumps to any
     # intra-fn PC and `can_reach` becomes vacuous at large bounds.
     # Safe for leaf functions (where ra never changes); see module
-    # docstring for the non-leaf extension plan.
-    ra = regs[1]
-    ra_masked = m.op("and", BV64, ra, m.const(BV64, 0xFFFF_FFFF_FFFF_FFFE))
-    below = m.op("ult", BV1, ra_masked, m.const(BV64, fn.start))
-    at_or_above = m.op("ugte", BV1, ra_masked, m.const(BV64, fn.end))
-    m.constraint(m.op("or", BV1, below, at_or_above))
+    # docstring for the non-leaf extension plan. Skipped when ra is
+    # havoc'd, which CEGAR does in its most abstract iteration.
+    if 1 not in havoc:
+        ra = regs[1]
+        ra_masked = m.op("and", BV64, ra, m.const(BV64, 0xFFFF_FFFF_FFFF_FFFE))
+        below = m.op("ult", BV1, ra_masked, m.const(BV64, fn.start))
+        at_or_above = m.op("ugte", BV1, ra_masked, m.const(BV64, fn.end))
+        m.constraint(m.op("or", BV1, below, at_or_above))
 
     # PC state, initialized to the function entry.
     pc = m.state(BV64, "pc")
@@ -135,9 +157,13 @@ def build_reach(
             mem_init = m.write(mem_init, addr_node, byte_node)
         m.init(mem, mem_init)
 
-    # Build per-instruction next-state contributions.
+    # Build per-instruction next-state contributions. Havoc'd registers
+    # carry no next-state (they're per-cycle inputs), so writes to them
+    # are dropped here rather than conditionally emitted.
     next_pc = pc                                  # default: stuck
-    next_regs: dict[int, Node] = {i: regs[i] for i in range(1, NREGS)}
+    next_regs: dict[int, Node] = {
+        i: regs[i] for i in range(1, NREGS) if i not in havoc
+    }
     next_mem = mem                                # default: memory unchanged
 
     for inst, d in decoded:
@@ -146,13 +172,15 @@ def build_reach(
         here = m.op("eq", BV1, pc, pc_const)
         next_pc = m.ite(here, npc, next_pc)
         for rd, expr in writes.items():
+            if rd in havoc:
+                continue                          # writes to havoc'd regs drop
             next_regs[rd] = m.ite(here, expr, next_regs[rd])
         if mem_write is not None:
             assert next_mem is not None            # uses_memory → mem exists
             next_mem = m.ite(here, mem_write, next_mem)
 
-    for i in range(1, NREGS):
-        m.next(regs[i], next_regs[i])
+    for i, nxt in next_regs.items():
+        m.next(regs[i], nxt)
     m.next(pc, next_pc)
     if mem is not None:
         assert next_mem is not None and free_mem is not None
