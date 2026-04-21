@@ -52,11 +52,13 @@ rotor/
 │   ├── solvers/                 ← L0 Phase 3: solver backends
 │   │   ├── base.py
 │   │   ├── z3bv.py              ← M1–M7: Z3 BMC backend (shipping)
+│   │   ├── z3spacer.py          ← Phase 6: Z3 Spacer PDR/IC3 backend (shipping)
 │   │   ├── portfolio.py
 │   │   ├── bitwuzla.py          ← deferred: additional BMC backend
 │   │   ├── btormc.py            ← deferred: native BTOR2 model checker
 │   │   ├── kind.py              ← deferred: shared k-induction driver
-│   │   └── ic3.py               ← deferred: IC3/PDR subprocess bridges
+│   │   └── ic3.py               ← deferred: external-engine subprocess bridges
+│   │                              (rIC3 / AVR / ABC), under the same Protocol
 │   ├── ir/                      ← L1–L3: internal representations
 │   │   ├── __init__.py
 │   │   ├── protocols.py         ← capability protocols
@@ -64,6 +66,7 @@ rotor/
 │   │   ├── dag.py               ← L1: BV expression DAG
 │   │   ├── ssa.py               ← L2: SSA-BV
 │   │   └── bvdd.py              ← L3: BVDD (pure Python; Rust via PyO3 later)
+│   ├── cegar.py                 ← Phase 6: CEGAR loop over Z3Spacer + witness
 │   ├── instance.py              ← L0: RotorInstance (one obligation)
 │   ├── engine.py                ← L0: RotorEngine (orchestration + portfolio)
 │   ├── api.py                   ← L0: high-level question API
@@ -512,7 +515,8 @@ CI matrix:
 |---|---|---|
 | **M1** | Phases 1–3: ELF + BTOR2 + one BMC backend answers `can_reach` | Integration test on `add2.elf` passes |
 | **M2** | Phases 4–5: portfolio + source trace | Trace markdown lands for BMC counterexamples |
-| **M3** | Phases 6–7: IC3/CEGAR + API/CLI parity | README Quick Start runs verbatim |
+| **M3a** | Phase 6: IC3/CEGAR wiring (Z3Spacer, cegar_reach, `--unbounded` / `--cegar` CLI) | `counter.elf::tiny_mask` proved unbounded; CEGAR detects spurious CEX |
+| **M3b** | Phase 7: remaining API/CLI verbs (`verify`, `find_input`, `are_equivalent`) | README Quick Start runs verbatim for every verb |
 | **M4** | BTOR2 emitter seam introduced (no behavior change) | `IdentityEmitter` used end-to-end; tests green |
 | **M5** | Phase 8: full RV64I in the native L0 builder | branches.elf fixture passes; decoder + witness cover every RV64I instruction |
 | **M6** | Phase 9: memory model — SMT array of bytes; loads / stores; ELF segment loader | non-leaf and .rodata-reading fixtures pass |
@@ -522,7 +526,10 @@ CI matrix:
 | **M9** | L3 (BVDD) pure-Python prototype | L0-equivalence on set-heavy workloads |
 | **M10** | L3 Rust backend (optional) | Measurable improvement over Python prototype |
 
-M1–M3 are the L0 shipping gate. M4 is the seam. M5–M6 expand L0's
+M1, M2, M3a are the L0 shipping gate for `can_reach` under bounded,
+unbounded, and CEGAR modes. M3b finishes the verb set; it is not a
+prerequisite for the IR layers (M7+) since those optimize the
+existing can_reach pipeline. M4 is the seam. M5–M6 expand L0's
 RISC-V coverage so the corpus can grow before any IR work begins.
 M7–M10 are the IR layers, each independently pursuable once M4 lands.
 M7.5 is a parallel track that landed alongside M7: it makes BTOR2 a
@@ -572,9 +579,13 @@ the architecture compose in either direction.
 
 ## Open questions (for future iteration)
 
-- Where does the memory model live in L1/L2? Full SMT array theory
-  always, or paged concrete + symbolic overlay when the symbolic
-  executor can prove aliasing bounds?
+- Where does the memory model live in L1/L2? Phase 6 ships an L0
+  escape hatch — `build_reach` skips the SMT-array state entirely
+  when the function has no load/store — which is what makes Spacer
+  viable on pure-arithmetic fixtures. The remaining question is
+  whether functions that *do* touch memory should use full SMT
+  array theory or a paged concrete + symbolic overlay once the
+  symbolic executor can prove aliasing bounds.
 - Should L3 BVDDs represent joint `(pc, regs)` state or factor by
   register? Factored is smaller in common cases; joint is simpler for
   image computation.

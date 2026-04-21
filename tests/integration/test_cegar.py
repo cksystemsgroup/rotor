@@ -6,12 +6,12 @@ a handful of iterations. The `reachable` test confirms that when the
 abstract CEX is real, concrete replay identifies it and CEGAR reports
 the real step.
 
-`bounded_counter` remains out of CEGAR's reach under the current
-register-granular abstraction — the loop invariant Spacer needs to
-infer is in the fanin of several registers and the abstract Spacer
-call exceeds its timeout budget. Test marked `skipif` with the
-waiting-on-M8 note; upgrading to SSA-BV slicing should collapse the
-state space the PDR engine has to reason over.
+`bounded_counter` exceeds Spacer under the current L0 encoding — the
+loop invariant lives in the fanin of several registers and the
+abstract Spacer call exceeds its timeout budget regardless of how
+many registers CEGAR unhavocs. M8's goal-directed SSA slicing is
+the designed fix: it will collapse the PDR state space to just the
+registers the property actually reads. Test skipped with that note.
 """
 
 from __future__ import annotations

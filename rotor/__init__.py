@@ -3,6 +3,10 @@
 L0 entry points:
 
     from rotor import RISCVBinary, RotorAPI
+
+Phase 6 adds unbounded reasoning and abstraction refinement:
+
+    from rotor import Z3Spacer, cegar_reach, CegarConfig
 """
 
 from rotor.api import ReachResult, RotorAPI

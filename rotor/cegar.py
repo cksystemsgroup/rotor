@@ -51,6 +51,11 @@ NREGS = 32
 # registers to unhavoc after a spurious CEX. Over-approximation is OK
 # — unhavoc'ing an unnecessary register only costs solver time, never
 # correctness. Under-approximation would loop CEGAR forever.
+#
+# Coverage status: full RV64I base per rotor/btor2/riscv/isa.py. Any
+# mnemonic added to the decoder (RV64M mul/div/rem, RVC, system) must
+# be classified here before CEGAR will converge on fixtures that use
+# it.
 
 _READS_RS1_AND_RS2 = frozenset({
     # R-type arithmetic
@@ -90,8 +95,8 @@ def _regs_read_by(d: Decoded) -> set[int]:
 class CegarConfig:
     max_iterations: int = 16
     spacer_timeout: float = 30.0
-    bmc_bound: int = 40                   # for extracting CEX from abstract model
-    bmc_timeout: float = 15.0
+    bmc_bound: int = 25                   # for extracting CEX from abstract model
+    bmc_timeout: float = 20.0
     simulate_max_steps: int = 100         # concrete replay depth
 
 
