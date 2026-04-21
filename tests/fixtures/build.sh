@@ -97,3 +97,31 @@ build_m() {
 
 build_m mul_add mult.elf mult.c
 echo "built: mult.elf"
+
+# Track B.3 fixture — RVC (compressed instructions). Built with
+# -march=rv64imc so clang emits 16-bit compressed ops alongside
+# full-width RV64I/M.
+build_imc() {
+    local entry="$1"; shift
+    local out="$1"; shift
+    if [[ "$CC" == *clang* ]]; then
+        local obj
+        obj="$(mktemp --suffix=.o)"
+        "$CC" --target=riscv64 \
+            -march=rv64imc -mabi=lp64 -O2 \
+            -ffreestanding -nostdlib -nostartfiles \
+            -fno-asynchronous-unwind-tables -fno-unwind-tables -g \
+            -c -o "$obj" "$@"
+        ld.lld -m elf64lriscv "--entry=$entry" -o "$out" "$obj"
+        rm -f "$obj"
+    else
+        "$CC" \
+            -march=rv64imc -mabi=lp64 -O2 \
+            -ffreestanding -nostdlib -nostartfiles \
+            -fno-asynchronous-unwind-tables -fno-unwind-tables -g \
+            "-Wl,--entry=$entry" -o "$out" "$@"
+    fi
+}
+
+build_imc add_rvc rvc.elf rvc.c
+echo "built: rvc.elf"

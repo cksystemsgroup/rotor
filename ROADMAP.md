@@ -93,10 +93,24 @@ fails on `decode() is None`.
    — no register writes, no memory writes. Honest semantics
    without a syscall model: any PC after a halt is correctly
    `unreachable` on that path.
-3. **RVC (compressed).** ⏳ Pending (B.3). The biggest lift —
-   variable-length encoding requires reshaping the instruction-
-   stream scanner.
-4. **Real gcc -O2 fixture.** ⏳ Pending (B.4). Depends on B.3.
+3. **RVC (compressed).** ✅ **Shipped (B.3a + B.3b).** Full coverage
+   of the RV64GC compressed subset minus floating-point:
+   - B.3a threads `size` through `Instruction`, `Decoded`, `_fall`,
+     and the witness simulator so the pipeline computes correct
+     `pc + 2` fall-throughs on 16-bit instructions.
+   - B.3b ships `rotor/btor2/riscv/rvc.py` with `expand_rvc(word16)`
+     covering ~32 compressed mnemonics across all three quadrants,
+     plus a variable-length scanner in `binary.py::instructions()`
+     that detects compressed vs. full-width by the low-two bits and
+     yields `Instruction(pc, expanded_word, size)`.
+   Fixture: `rvc.elf` built with `-march=rv64imc`, containing
+   mixed 2-byte and 4-byte instruction streams. Exercised by the
+   L0-equivalence harness across IdentityEmitter / DagEmitter /
+   SsaEmitter.
+4. **Real gcc -O2 fixture.** ⏳ Pending (B.4). With RVC + RV64M in,
+   only ELF-level plumbing (argument-passing setup, symbol lookup
+   for larger binaries) remains before a standard gcc -O2 output
+   can be analyzed end-to-end.
 
 **Exit criterion.** Rotor decodes `gcc -O2` of a small CLI program
 end-to-end. Fixture: a non-trivial binary with a known

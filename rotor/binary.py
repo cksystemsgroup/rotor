@@ -73,11 +73,37 @@ class RISCVBinary:
             raise KeyError(f"function {name!r} not found in {self.path}") from exc
 
     def instructions(self, fn: Function) -> Iterator[Instruction]:
-        """Yield 32-bit instruction words in [fn.start, fn.end)."""
+        """Yield instructions in [fn.start, fn.end), handling RVC.
+
+        RISC-V uses a variable-length encoding: if the low two bits of
+        the first halfword are `0b11` the instruction is 32-bit;
+        otherwise it is a 16-bit compressed (RVC) instruction and we
+        emit its expanded 32-bit RV64I/M equivalent via
+        `rotor.btor2.riscv.rvc.expand_rvc`. `Instruction.size` tracks
+        the real byte size (2 or 4) so the lowering pipeline computes
+        correct fall-through PCs.
+        """
+        from rotor.btor2.riscv.rvc import expand_rvc
         data = self._read_range(fn.start, fn.end)
-        for offset in range(0, len(data), 4):
-            word = int.from_bytes(data[offset:offset + 4], "little")
-            yield Instruction(pc=fn.start + offset, word=word)
+        offset = 0
+        end = len(data)
+        while offset < end:
+            lo = int.from_bytes(data[offset:offset + 2], "little")
+            if (lo & 0b11) == 0b11:
+                if offset + 4 > end:
+                    break                          # truncated 32-bit inst
+                word = int.from_bytes(data[offset:offset + 4], "little")
+                yield Instruction(pc=fn.start + offset, word=word, size=4)
+                offset += 4
+            else:
+                expanded = expand_rvc(lo)
+                if expanded is None:
+                    # Let the decoder signal unsupported-instruction on the
+                    # raw 16-bit word; preserves the existing error path.
+                    yield Instruction(pc=fn.start + offset, word=lo, size=2)
+                else:
+                    yield Instruction(pc=fn.start + offset, word=expanded, size=2)
+                offset += 2
 
     def loadable_bytes(self) -> Iterator[tuple[int, int]]:
         """Yield (vaddr, byte) pairs for every file-backed byte in PT_LOAD.

@@ -32,6 +32,7 @@ BRANCHES = "tests/fixtures/branches.elf"
 MEMOPS = "tests/fixtures/memops.elf"
 RODATA = "tests/fixtures/rodata.elf"
 MULT = "tests/fixtures/mult.elf"
+RVC = "tests/fixtures/rvc.elf"
 
 CORPUS: tuple[CorpusEntry, ...] = (
     # add2.elf — straight-line + simple conditional fixture (M1)
@@ -78,4 +79,11 @@ CORPUS: tuple[CorpusEntry, ...] = (
     CorpusEntry("divmod-ret",                MULT, "divmod",  0x10, 4, "reachable",   4),
     CorpusEntry("mul64-entry-trivial",       MULT, "mul64",   0x00, 0, "reachable",   0),
     CorpusEntry("mul64-ret",                 MULT, "mul64",   0x04, 1, "reachable",   1),
+
+    # rvc.elf — exercises the RVC (compressed) decoder + variable-length scanner.
+    CorpusEntry("add_rvc-entry-trivial",     RVC, "add_rvc", 0x00, 0, "reachable",   0),
+    CorpusEntry("add_rvc-ret",               RVC, "add_rvc", 0x02, 1, "reachable",   1),
+    CorpusEntry("triple-entry-trivial",      RVC, "triple",  0x00, 0, "reachable",   0),
+    CorpusEntry("triple-ret",                RVC, "triple",  0x08, 3, "reachable",   3),
+    CorpusEntry("signbit-ret",               RVC, "signbit", 0x04, 1, "reachable",   1),
 )
