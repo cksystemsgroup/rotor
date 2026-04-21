@@ -76,6 +76,30 @@ Currently shipped verbs (L0 today): `info`, `disasm`, `reach` /
 land in later milestones under the same external contract — see
 [`PLAN.md`](PLAN.md).
 
+`rotor reach` supports three reasoning modes:
+
+- **default** — bounded BMC via Z3. Answers `reachable` with a
+  concrete counterexample or `unreachable` up to the given bound.
+- **`--unbounded`** — PDR/IC3 via Z3 Spacer. Can answer `proved`
+  with an inductive invariant that holds at every depth.
+- **`--cegar`** — counterexample-guided abstraction refinement.
+  Starts with every register havoc'd and refines on spurious CEX,
+  giving Spacer a smaller PDR state space to reason over.
+
+```console
+$ rotor reach tests/fixtures/counter.elf --function tiny_mask \
+    --target 0x1117c --unbounded
+verdict  : proved
+bound    : 0
+elapsed  : 5.5s
+backend  : z3-spacer
+invariant: And(Or(...), ...)
+```
+
+The same three modes are available through the Python API as
+`api.can_reach(...)`, `api.can_reach(..., unbounded=True)`, and
+`api.cegar_reach(...)`.
+
 ---
 
 ## Debugging and benchmarking with BTOR2 text
@@ -230,14 +254,14 @@ algebra subtly loses a case, L0 catches it on a concrete example.
 Reasoning modes are properties of the solver stack, independent of which
 IR layer produced the BTOR2. Any layer can target any mode.
 
-### Bounded Model Checking (BMC)
+### Bounded Model Checking (BMC) — shipping via `Z3BMC`
 
 Unroll the BTOR2 machine model `k` times; ask an SMT solver whether any
 bad state is reachable. Finds concrete bugs fast; cannot prove safety
 beyond `k` steps. **Answer:** BUG (with input and source trace) or
 SAFE-UP-TO-k.
 
-### IC3 / Property-Directed Reachability
+### IC3 / Property-Directed Reachability — shipping via `Z3Spacer`
 
 Search for an inductive invariant separating initial from bad states,
 without bounding steps. **Answer:** BUG (concrete counterexample) or
@@ -245,17 +269,34 @@ PROVED (invariant verified for all executions of any length). For
 finite-state components — bounded loops, fixed-size buffers, protocol
 state machines — IC3 typically terminates quickly.
 
-### CEGAR (Counterexample-Guided Abstraction Refinement)
+Rotor's `Z3Spacer` backend translates the BTOR2 Model into a
+Constrained Horn Clause system over a single `Inv` relation and
+queries Z3's Spacer engine. Subprocess bridges to external engines
+(rIC3, AVR, ABC) land later under the same `SolverBackend` Protocol
+when a workload benefits.
+
+### CEGAR (Counterexample-Guided Abstraction Refinement) — shipping via `cegar_reach`
 
 Abstract the model, run IC3 on the abstraction, refine on spurious
 counterexamples. Extends unbounded reasoning to programs too large for
 direct IC3.
 
-### Portfolio
+Rotor's `cegar_reach` starts from maximally-abstract (every register
+havoc'd as a per-cycle BTOR2 input) and unhavocs registers read by
+the concrete replay path when Spacer's counterexample turns out to
+be spurious. The concrete replay runs through `rotor/witness.py`,
+which shares its semantics with the BTOR2 lowering so divergence
+between abstract and concrete traces is always attributable to a
+havoc'd register's slack.
 
-Race multiple solver configurations in parallel. First conclusive result
-wins. Can be combined with learned algorithm selection based on features
-of the BTOR2 model.
+### Portfolio — shipping via `Portfolio`
+
+Race multiple solver configurations in parallel. First globally-
+conclusive result (`reachable` or `proved`) wins and cancels the
+rest; if no global result lands, the deepest `unreachable` is
+returned as the strongest safe-up-to claim. Can be combined with
+learned algorithm selection based on features of the BTOR2 model
+(future work).
 
 ---
 

@@ -175,15 +175,50 @@ printer/parser.
 
 ### Phase 6 — IC3 and CEGAR wiring
 
-**Deliverable:** `rotor/solvers/ic3.py`, `rotor/cegar.py`.
+**Deliverable:** `rotor/solvers/z3spacer.py`, `rotor/cegar.py`, plus
+CLI / API surfaces (`--unbounded`, `--cegar`, `api.can_reach(unbounded=
+True)`, `api.cegar_reach`).
 
-- IC3 backends as subprocess bridges to rIC3, AVR, ABC; return invariant
-  when SAFE.
-- CEGAR loop in Python: abstract → IC3 → refine on spurious CEX → repeat.
-  Uses `RotorInstance` to build abstractions.
+- **IC3 via Z3 Spacer (in-process).** `Z3Spacer` translates a BTOR2
+  Model into a Constrained Horn Clause system over a single `Inv`
+  relation and queries `z3.Fixedpoint` with engine=spacer. Returns
+  `proved` with an invariant certificate, `reachable` (no step —
+  Spacer's Python API doesn't expose witness traces), or `unknown`.
+  Bound is accepted for Protocol compatibility but ignored.
+- **Subprocess bridges to rIC3 / AVR / ABC: deferred.** Added only
+  when an external engine beats Spacer on a workload rotor ships
+  against. Same `SolverBackend` Protocol; no architectural change.
+- **CEGAR loop.** `rotor/cegar.py` wraps Spacer in a refinement
+  loop: start with every register havoc'd (`build_reach(havoc_regs=
+  set(range(1,32)))`), run Spacer, validate any `reachable` verdict
+  against rotor's concrete witness simulator, and unhavoc registers
+  the real path read on spurious CEX. The refinement strategy is
+  register-localization — a simple, terminating heuristic; smarter
+  predicate-abstraction variants are future work (see Open Questions).
+- **Entry-state assumption** in `build_reach`: constraint `(ra & ~1)
+  ∉ [fn.start, fn.end)` so free `ra` cannot collapse `can_reach`
+  via an adversarial `ret`. Skipped when `ra` is havoc'd. First
+  facet of a future `EntryAssumptions` object that will grow to
+  model a real bootloader / call-site on non-leaf functions.
+- **Memory-model skip** in `build_reach`: if no instruction in the
+  function is a load or store, the SMT array state + ELF write-chain
+  init are omitted. Cuts the Model by ~7× on pure-arithmetic
+  functions and is what makes Spacer viable on them — array theory
+  in PDR is otherwise a scaling cliff.
 
-**Tests:** bounded-counter safety proved unbounded; spurious-CEX corpus
-refines correctly.
+**Tests:** `tests/integration/test_ic3_counter.py` exercises the
+BMC/IC3 contrast on `counter.elf::tiny_mask` — BMC answers
+`unreachable` at every bound, Spacer answers `proved` with an
+invariant, and the portfolio prefers the globally-conclusive result.
+`tests/integration/test_cegar.py` covers CEGAR's `proved` (2
+iterations, 27/31 regs still havoc'd), `reachable` (concrete replay
+confirms a real CEX), and `unknown` (iteration-budget exhaustion)
+paths. `tests/integration/test_api_unbounded.py` covers the API
+kwargs and the regression that default `can_reach` stays bounded BMC.
+`counter.elf::bounded_counter` — the loop-carried dead-branch case —
+exceeds Spacer under the current L0 encoding; the fix is M8's
+goal-directed slicing, which will collapse the PDR state space to
+just the registers in the property's fanin.
 
 ### Phase 7 — High-level API and CLI
 
@@ -545,8 +580,12 @@ the architecture compose in either direction.
   image computation.
 - Does rotor need its own incremental BTOR2 protocol, or is per-query
   regeneration (with IR-side caching) good enough?
-- How does CEGAR choose abstraction predicates — hand-written, Houdini,
-  or learned?
+- How does CEGAR choose abstraction predicates beyond register-
+  localization? Phase 6 ships a simple "unhavoc every register read
+  by the concrete replay path" heuristic — terminating and sound but
+  coarse. Houdini-style conjunction candidates, learned predicates,
+  or interpolant-driven refinement are obvious next steps; each
+  slots under the same `cegar_reach` entry point.
 
 These are explicitly out of scope for the initial L0 ship and are
 revisited after M4.
