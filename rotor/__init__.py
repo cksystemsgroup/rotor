@@ -9,7 +9,7 @@ from rotor.api import ReachResult, RotorAPI
 from rotor.binary import Function, RISCVBinary
 from rotor.engine import EngineConfig, RotorEngine
 from rotor.ir import BTOR2Emitter, DagEmitter, IdentityEmitter, QuestionSpec, ReachSpec
-from rotor.solvers import Portfolio, PortfolioEntry, Z3BMC
+from rotor.solvers import Portfolio, PortfolioEntry, Z3BMC, Z3Spacer
 from rotor.trace import Trace
 
 __all__ = [
@@ -27,5 +27,6 @@ __all__ = [
     "Portfolio",
     "PortfolioEntry",
     "Z3BMC",
+    "Z3Spacer",
     "Trace",
 ]
