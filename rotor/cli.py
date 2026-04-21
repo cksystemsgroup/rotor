@@ -81,6 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Use counterexample-guided abstraction refinement. "
                            "Starts with every register havoc'd and refines on "
                            "spurious counterexamples.")
+    mode.add_argument("--portfolio", action="store_true",
+                      help="Race every available solver backend in parallel "
+                           "(Z3 BMC/Spacer, Bitwuzla if installed, rIC3/btormc "
+                           "if on PATH). First globally-conclusive verdict wins.")
     rc.add_argument("--trace", type=Path,
                     help="Write counterexample markdown to this path "
                          "instead of stderr.")
@@ -170,8 +174,10 @@ def cmd_disasm(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
 
 
 def cmd_reach(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
+    from rotor.solvers import default_portfolio
     target = _parse_int(args.target)
-    with RotorAPI(args.elf, default_bound=args.bound) as api:
+    portfolio = default_portfolio(bound=args.bound) if args.portfolio else None
+    with RotorAPI(args.elf, default_bound=args.bound, portfolio=portfolio) as api:
         if args.cegar:
             r = api.cegar_reach(function=args.function, target_pc=target)
         else:
