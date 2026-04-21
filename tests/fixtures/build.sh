@@ -61,3 +61,9 @@ echo "built: memops.elf"
 
 build pick      rodata.elf    rodata.c
 echo "built: rodata.elf"
+
+# Phase 6.3 fixture — a loop whose dead branch is provable only via
+# an inductive invariant. Z3Spacer proves unbounded safety; Z3BMC
+# can only answer "unreachable up to bound k".
+build bounded_counter counter.elf counter.c
+echo "built: counter.elf"
