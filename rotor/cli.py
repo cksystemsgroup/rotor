@@ -159,6 +159,31 @@ def build_parser() -> argparse.ArgumentParser:
                     help="BMC unroll bound (default: 20).")
     eq.set_defaults(func=cmd_equivalent)
 
+    bn = sub.add_parser(
+        "benchmark",
+        help="Run a solver shootout across rotor's backends.",
+    )
+    src = bn.add_mutually_exclusive_group(required=True)
+    src.add_argument("--fixtures", action="store_true",
+                     help="Use rotor's L0-equivalence corpus as the "
+                          "benchmark set.")
+    src.add_argument("--btor2-dir", type=Path,
+                     help="Directory containing *.btor2 benchmark files "
+                          "(e.g. an HWMCC BV-track checkout).")
+    bn.add_argument("--bound", type=int, default=20,
+                    help="BMC unroll bound (default: 20).")
+    bn.add_argument("--timeout", type=float, default=30.0,
+                    help="Per-engine timeout in seconds (default: 30).")
+    bn.add_argument("--out", type=Path,
+                    help="Write the Markdown report to this path "
+                         "instead of stdout.")
+    bn.add_argument("--engine", action="append",
+                    choices=["z3-bmc", "bitwuzla", "z3-spacer", "portfolio"],
+                    help="Limit the shootout to specific engines. "
+                         "Repeatable. Default: all in-process engines + "
+                         "portfolio.")
+    bn.set_defaults(func=cmd_benchmark)
+
     rt = sub.add_parser(
         "btor2-roundtrip",
         help="Parse a BTOR2 file and re-emit it (diagnostics on stderr).",
@@ -413,6 +438,53 @@ def cmd_equivalent(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
     if r.verdict in ("unreachable", "proved"):
         return EXIT_OK
     return EXIT_UNKNOWN
+
+
+def cmd_benchmark(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
+    from rotor.bench import (
+        btor2_dir_corpus, format_markdown, rotor_fixture_corpus, run_shootout,
+    )
+    from rotor.solvers import default_portfolio, Z3BMC, Z3Spacer
+
+    all_engines: list[tuple[str, object]] = [
+        ("z3-bmc",   lambda: Z3BMC()),
+        ("z3-spacer", lambda: Z3Spacer()),
+    ]
+    try:
+        import bitwuzla                              # noqa: F401
+        from rotor.solvers import BitwuzlaBMC
+        all_engines.append(("bitwuzla", lambda: BitwuzlaBMC()))
+    except ImportError:                              # pragma: no cover
+        pass
+    all_engines.append((
+        "portfolio",
+        lambda: default_portfolio(bound=args.bound, timeout=args.timeout),
+    ))
+
+    engines = all_engines
+    if args.engine:
+        wanted = set(args.engine)
+        engines = [e for e in all_engines if e[0] in wanted]
+
+    if args.fixtures:
+        corpus = rotor_fixture_corpus()
+    else:
+        corpus = btor2_dir_corpus(args.btor2_dir)
+
+    print(f"Running {len(corpus)} benchmark(s) "
+          f"against {len(engines)} engine(s); "
+          f"timeout={args.timeout}s bound={args.bound}.", file=err)
+
+    result = run_shootout(
+        corpus, engines, bound=args.bound, timeout=args.timeout,
+    )
+    report = format_markdown(result)
+    if args.out is not None:
+        args.out.write_text(report)
+        print(f"wrote report to {args.out}", file=err)
+    else:
+        out.write(report)
+    return EXIT_OK
 
 
 def cmd_btor2_roundtrip(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:

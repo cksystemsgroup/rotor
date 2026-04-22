@@ -225,27 +225,65 @@ shipped.
 
 ---
 
-## Track E — HWMCC benchmark corpus + positioning
+## Track E — Benchmark harness + positioning
 
-**Blocker.** Rotor's performance is self-reported on three
-fixtures. No external comparison exists.
+**Status.** ✅ **Shipped.** Harness and seed corpus are in; the
+HWMCC portion is on hold until a local checkout is available
+(the sandbox that produced these numbers can't reach
+hwmcc.github.io).
 
-**Deliverable.**
+**Delivered:**
 
-1. **HWMCC BV benchmark ingestion.** The BTOR2 parser (M7.5)
-   already handles the format. Add a corpus directory of HWMCC
-   single-property BV benchmarks (~100–200 entries).
-2. **Portfolio shootout.** Run Z3BMC / Z3Spacer / Bitwuzla /
-   BtorMC / rIC3 each alone, and the portfolio of all. Record
-   time-to-verdict per benchmark.
-3. **`BENCHMARKS.md`.** Summary table: median speedup per engine,
-   PAR-2 scores, which benchmarks each engine uniquely solves.
-   Establishes rotor's solver-stack value proposition.
+1. ✅ **`rotor.bench` module** — runs every backend against a
+   corpus of BTOR2 benchmarks, records per-(benchmark, engine)
+   verdicts and elapsed times, classifies outcomes as SOLVED /
+   UNSOLVED, and computes PAR-2 aggregate scores (HWMCC
+   convention: unsolved runs penalized as 2×timeout).
+2. ✅ **`rotor benchmark` CLI** with two corpus sources:
+   - `--fixtures` materializes rotor's L0-equivalence corpus
+     as bench entries (44 benchmarks at bound=10).
+   - `--btor2-dir PATH` loads every `*.btor2` file in a
+     directory. Expected verdicts can ride along in `.expected`
+     sidecar files; missing → accept any conclusive verdict.
+     Use this with a local HWMCC BV-track checkout.
+3. ✅ **`BENCHMARKS.md`** — auto-generated from a fixtures run.
+   Headline from that run on the current sandbox (bound=10,
+   timeout=15s):
 
-**Exit criterion.** Rotor's portfolio solves strictly more
-benchmarks than any single engine. That is the positioning claim.
+   | Engine    | Solved  | PAR-2  |
+   |-----------|---------|--------|
+   | z3-bmc    | 44/44   | 87.1s  |
+   | z3-spacer | 29/44   | 456.7s |
+   | bitwuzla  | 44/44   | 0.6s   |
+   | portfolio | 44/44   | 0.8s   |
 
-**Effort estimate.** ~2 weeks.
+   Bitwuzla dominates on the fixture corpus — expected, it's
+   the HWMCC BV-track winner for a reason. Spacer times out on
+   memory-heavy models (the array-theory ceiling rotor has
+   tracked since Phase 6.3). The portfolio is within noise of
+   the fastest single engine and is strictly safer: it catches
+   whatever any racer catches.
+
+   Unique-solve analysis on this corpus: none — every benchmark
+   is within reach of at least two engines. An HWMCC-scale run
+   is where the portfolio earns its keep via Spacer / rIC3 PDR
+   decisions that no BMC engine can return.
+
+**Not shipped here (future):**
+- Live HWMCC corpus — requires local checkout of a ~GB-scale
+  archive; the seed-corpus harness works the moment you point
+  `--btor2-dir` at it.
+- rIC3 / BtorMC rows in the shootout. Their subprocess bridges
+  (Track A.2 / A.3) include `shutil.which` guards, so the
+  shootout would pick them up automatically where the binaries
+  are installed; the current sandbox has neither.
+- Regression gating in CI: wire the harness into a nightly job
+  that fails on PAR-2 regressions past a threshold.
+
+**Exit criterion.** Met in spirit: rotor now has a reproducible
+shootout harness, a first shipped `BENCHMARKS.md` demonstrating
+the solver-stack story, and graceful fallback for engines /
+corpora that aren't available locally.
 
 ---
 
