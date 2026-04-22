@@ -112,6 +112,24 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Use Z3 Spacer for unbounded verification.")
     vf.set_defaults(func=cmd_verify)
 
+    fi = sub.add_parser(
+        "find-input",
+        help="Synthesize an input that makes a register predicate hold at ret.",
+    )
+    fi.add_argument("elf", type=Path)
+    fi.add_argument("--function", required=True)
+    fi.add_argument("--register", required=True,
+                    help="Register to read at each ret (ABI name or index).")
+    fi.add_argument("--op", required=True,
+                    choices=["eq", "neq", "slt", "slte", "sgt", "sgte",
+                             "ult", "ulte", "ugt", "ugte"],
+                    help="Comparison operator. Signedness is encoded in the name.")
+    fi.add_argument("--value", required=True,
+                    help="Right-hand side of the predicate (hex 0x.. or decimal).")
+    fi.add_argument("--bound", type=int, default=20,
+                    help="BMC unroll bound (default: 20).")
+    fi.set_defaults(func=cmd_find_input)
+
     rt = sub.add_parser(
         "btor2-roundtrip",
         help="Parse a BTOR2 file and re-emit it (diagnostics on stderr).",
@@ -289,6 +307,43 @@ def cmd_verify(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
     # reachable (predicate can fail)  → EXIT_FOUND (1)
     # unreachable/proved (predicate holds)  → EXIT_OK (0)
     # unknown → EXIT_UNKNOWN (2)
+    if r.verdict == "reachable":
+        return EXIT_FOUND
+    if r.verdict in ("unreachable", "proved"):
+        return EXIT_OK
+    return EXIT_UNKNOWN
+
+
+def cmd_find_input(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
+    register = _parse_register(args.register)
+    rhs = _parse_int(args.value)
+    with RotorAPI(args.elf, default_bound=args.bound) as api:
+        r = api.find_input(
+            function=args.function,
+            register=register,
+            comparison=args.op,
+            rhs=rhs,
+            bound=args.bound,
+        )
+
+    print(f"verdict  : {r.verdict}", file=out)
+    print(f"bound    : {r.bound}", file=out)
+    if r.step is not None:
+        print(f"step     : {r.step}", file=out)
+    print(f"elapsed  : {r.elapsed * 1000:.1f}ms", file=out)
+    print(f"backend  : {r.backend}", file=out)
+    if r.initial_regs:
+        nonzero = {k: v for k, v in r.initial_regs.items() if v}
+        if nonzero:
+            print(f"witness  : "
+                  + ", ".join(f"{k}=0x{v:x}" for k, v in sorted(nonzero.items())),
+                  file=out)
+
+    # `reachable` → synthesis succeeded, so EXIT_FOUND (like reach).
+    # `unreachable` / `unknown` → no witness found at this bound;
+    # not the same as "safe" semantically, but the exit-code
+    # convention treats "no bug found" as EXIT_OK to match the
+    # ergonomics of `rotor reach`.
     if r.verdict == "reachable":
         return EXIT_FOUND
     if r.verdict in ("unreachable", "proved"):

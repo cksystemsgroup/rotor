@@ -18,7 +18,7 @@ from typing import Callable, Optional, Union
 
 from rotor.binary import RISCVBinary
 from rotor.ir.emitter import BTOR2Emitter, IdentityEmitter
-from rotor.ir.spec import Comparison, ReachSpec, VerifySpec
+from rotor.ir.spec import Comparison, FindInputSpec, ReachSpec, VerifySpec
 from rotor.solvers.base import SolverBackend, SolverResult
 from rotor.solvers.portfolio import Portfolio
 from rotor.solvers.z3bv import Z3BMC
@@ -128,6 +128,40 @@ class RotorEngine:
                 model, bound=0,
                 timeout=timeout if timeout is not None else self.config.default_timeout,
             )
+        executor = self._executor()
+        if isinstance(executor, Portfolio):
+            return executor.check_reach(model)
+        return executor.check_reach(
+            model,
+            bound=bound if bound is not None else self.config.default_bound,
+            timeout=timeout if timeout is not None else self.config.default_timeout,
+        )
+
+    def check_find_input(
+        self,
+        function: str,
+        register: int,
+        comparison: Comparison,
+        rhs: int,
+        bound: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ) -> SolverResult:
+        """Synthesize an initial-register assignment such that
+        `regs[register] <comparison> rhs` holds at a return site of
+        `function`.
+
+        Bounded BMC only — unbounded PDR on find_input doesn't have
+        a useful interpretation (Spacer's `proved` verdict would mean
+        "no input achieves the predicate on any execution", which is
+        a verify question in disguise — use `check_verify(...,
+        unbounded=True)` with the negated comparison if that's the
+        question you want).
+        """
+        spec = FindInputSpec(
+            function=function, register=register,
+            comparison=comparison, rhs=rhs,
+        )
+        model = self._emitter.emit(spec)
         executor = self._executor()
         if isinstance(executor, Portfolio):
             return executor.check_reach(model)

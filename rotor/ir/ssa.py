@@ -32,11 +32,11 @@ structure lands when a consumer demands it.
 from __future__ import annotations
 
 from rotor.binary import RISCVBinary
-from rotor.btor2.builder import build_reach, build_verify
+from rotor.btor2.builder import build_find_input, build_reach, build_verify
 from rotor.btor2.nodes import Model
 from rotor.ir.dag import DagBuilder
 from rotor.ir.liveness import dead_registers
-from rotor.ir.spec import QuestionSpec, ReachSpec, VerifySpec
+from rotor.ir.spec import FindInputSpec, QuestionSpec, ReachSpec, VerifySpec
 
 
 class SsaEmitter:
@@ -78,6 +78,14 @@ class SsaEmitter:
             # never branches on it.
             dead.discard(spec.register)
             return build_verify(
+                self._binary, spec,
+                builder=DagBuilder(), havoc_regs=dead,
+            )
+        if isinstance(spec, FindInputSpec):
+            # Same carve-out as VerifySpec — the find_input predicate
+            # also reads spec.register at return sites.
+            dead.discard(spec.register)
+            return build_find_input(
                 self._binary, spec,
                 builder=DagBuilder(), havoc_regs=dead,
             )

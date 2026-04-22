@@ -36,12 +36,15 @@ class ReachResult:
     invariant: Optional[str] = None    # certificate when verdict == "proved"
 
 
-# `verify` reuses `ReachResult` — the two questions share the same
-# verdict vocabulary and counterexample shape. The only asymmetry is
-# interpretation: `reachable` on a verify means the predicate FAILED,
-# not that something was "reached". Use the verb you called to
-# interpret the result.
+# `verify` and `find_input` reuse `ReachResult` — all three verbs
+# share the same verdict vocabulary and counterexample shape. The
+# asymmetry is interpretation:
+#   can_reach:   `reachable` = PC hit the target.
+#   verify:      `reachable` = predicate FAILED (CEX found).
+#   find_input:  `reachable` = predicate HOLDS (synthesis witness).
+# Use the verb you called to interpret the result.
 VerifyResult = ReachResult
+FindInputResult = ReachResult
 
 
 class RotorAPI:
@@ -155,6 +158,43 @@ class RotorAPI:
             backend=result.backend,
             trace=None,
             invariant=result.invariant,
+        )
+
+    def find_input(
+        self,
+        function: str,
+        register: int,
+        comparison: str,
+        rhs: int,
+        bound: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ) -> "FindInputResult":
+        """Synthesize an input that makes `regs[register] <comparison>
+        rhs` hold at a return site of `function`.
+
+        - `reachable` → witness found; `initial_regs` is the input.
+        - `unreachable` → no input achieves the predicate within the
+          given bound. (Larger bound may still find one.)
+        - `unknown` → solver gave up.
+
+        Bounded BMC only. For an unbounded "is the predicate
+        achievable on any execution?" question, use `verify(...,
+        comparison=negated_op, unbounded=True)` — `reachable` there
+        answers the same question.
+        """
+        result = self._engine.check_find_input(
+            function, register, comparison, rhs,
+            bound=bound, timeout=timeout,
+        )
+        return ReachResult(
+            verdict=result.verdict,
+            bound=result.bound,
+            step=result.step,
+            initial_regs=result.initial_regs,
+            elapsed=result.elapsed,
+            backend=result.backend,
+            trace=None,
+            invariant=None,
         )
 
     def cegar_reach(

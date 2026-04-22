@@ -168,9 +168,15 @@ want anything beyond reachability hit a wall.
    as `VerifyResult`) since both verbs share the same verdict
    vocabulary. Richer predicates (lambdas, conjunctions,
    memory-region constraints) are future work.
-2. **`find_input(function, output_condition)`** — `bad =
-   output_condition` under BMC, return witness as SARIF / JSON /
-   trace.
+2. **`find_input(function, output_condition)`** — ✅ **Shipped
+   (D.2).** Synthesizes an initial-register assignment such that
+   `regs[R] OP rhs` holds at a return site. Same spec shape as
+   `verify` but with flipped polarity: `reachable` means
+   "witness found, `initial_regs` is the synthesized input".
+   Shared `_return_site_bad` helper with `verify` (one
+   `negate: bool` flag is the only difference). Exposed as
+   `api.find_input(...)` and `rotor find-input` CLI subcommand.
+   Richer witness output (SARIF / JSON) is future work.
 3. **`are_equivalent(other_binary, function)`** — product
    construction: two copies of the machine sharing inputs,
    `bad = output_differs`. Closes the binary-level

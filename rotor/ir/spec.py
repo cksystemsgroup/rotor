@@ -59,3 +59,30 @@ class VerifySpec(QuestionSpec):
     register: int
     comparison: Comparison
     rhs: int
+
+
+@dataclass(frozen=True)
+class FindInputSpec(QuestionSpec):
+    """find_input obligation: synthesize an initial-register
+    assignment such that `regs[register] OP rhs` holds at a return
+    site of `function`.
+
+    Shape is identical to VerifySpec; the only difference is
+    polarity — the emitter does NOT negate the predicate:
+
+        bad = (pc at any ret in fn) ∧ (regs[register] OP rhs)
+
+    So `reachable` means "the predicate is achievable — initial_regs
+    constitute a witness input to the function"; `unreachable`
+    (bounded) or `proved` (unbounded via Spacer) means "no input
+    satisfies the predicate at a return site within the given
+    bound / on any execution path".
+
+    Equivalent to `VerifySpec` with the comparison negated, but
+    exposed as a separate spec so the API and CLI can present the
+    verdict with its natural find-input interpretation.
+    """
+    function: str
+    register: int
+    comparison: Comparison
+    rhs: int

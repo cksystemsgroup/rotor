@@ -54,7 +54,7 @@ from rotor.binary import Function, RISCVBinary
 from rotor.btor2.nodes import ArraySort, Model, Node, Sort
 from rotor.btor2.riscv.decoder import decode
 from rotor.btor2.riscv.isa import MEMORY_MNEMONICS, lower
-from rotor.ir.spec import ReachSpec, VerifySpec
+from rotor.ir.spec import FindInputSpec, ReachSpec, VerifySpec
 
 BV1 = Sort(1)
 BV8 = Sort(8)
@@ -196,6 +196,39 @@ def build_reach(
     return mc.m
 
 
+def _return_site_bad(mc: "_Machine", spec, function_name: str, *, negate: bool) -> Node:
+    """Build the shared `bad` expression for verb specs that observe
+    a register at every return site of the function.
+
+    `negate=True` gives verify semantics — bad = (pc at ret) ∧
+    ¬predicate — so `reachable` means the predicate failed.
+    `negate=False` gives find_input semantics — bad = (pc at ret) ∧
+    predicate — so `reachable` means the predicate is achievable
+    and the CEX is the synthesized input.
+    """
+    m = mc.m
+    ret_pcs = [
+        inst.pc for inst, d in mc.decoded
+        if d.mnem == "jalr" and d.rd == 0 and d.rs1 == 1 and d.imm == 0
+    ]
+    if not ret_pcs:
+        raise ValueError(
+            f"function {function_name!r} has no ret instruction; "
+            f"this verb requires at least one return site"
+        )
+
+    at_ret = m.op("eq", BV1, mc.pc, m.const(BV64, ret_pcs[0]))
+    for ret_pc in ret_pcs[1:]:
+        at_ret = m.op("or", BV1, at_ret, m.op("eq", BV1, mc.pc, m.const(BV64, ret_pc)))
+
+    reg_val = mc.regs[spec.register]
+    rhs_const = m.const(BV64, spec.rhs & ((1 << 64) - 1))
+    predicate = m.op(spec.comparison, BV1, reg_val, rhs_const)
+    if negate:
+        predicate = m.op("eq", BV1, predicate, m.const(BV1, 0))
+    return m.op("and", BV1, at_ret, predicate)
+
+
 def build_verify(
     binary: RISCVBinary,
     spec: "VerifySpec",
@@ -204,11 +237,9 @@ def build_verify(
 ) -> Model:
     """Compile a VerifySpec into a BTOR2 Model.
 
-    The `bad` state is defined as:
+    bad = (pc at any `ret` in fn) ∧ ¬(regs[R] OP rhs)
 
-        bad = (pc at any `ret` in fn) ∧ ¬(regs[R] OP rhs)
-
-    So `proved` means the predicate holds on every execution path
+    `proved` means the predicate holds on every execution path
     that returns from the function; `reachable` means some input
     makes the predicate fail at a return site.
 
@@ -220,32 +251,28 @@ def build_verify(
     is a natural refinement.
     """
     mc = _build_machine(binary, spec.function, builder, havoc_regs)
-    m = mc.m
+    mc.m.bad(_return_site_bad(mc, spec, spec.function, negate=True))
+    return mc.m
 
-    # Enumerate return-instruction PCs. `ret` is the canonical `jalr
-    # x0, x1, 0`; we include all jalrs that use ra as the base and
-    # discard the link register, since compilers emit only that form
-    # for function returns.
-    ret_pcs = [
-        inst.pc for inst, d in mc.decoded
-        if d.mnem == "jalr" and d.rd == 0 and d.rs1 == 1 and d.imm == 0
-    ]
-    if not ret_pcs:
-        raise ValueError(
-            f"function {spec.function!r} has no ret instruction; "
-            f"verify requires at least one return site"
-        )
 
-    at_ret = m.op("eq", BV1, mc.pc, m.const(BV64, ret_pcs[0]))
-    for ret_pc in ret_pcs[1:]:
-        at_ret = m.op("or", BV1, at_ret, m.op("eq", BV1, mc.pc, m.const(BV64, ret_pc)))
+def build_find_input(
+    binary: RISCVBinary,
+    spec: "FindInputSpec",
+    builder: Optional[Model] = None,
+    havoc_regs: Optional[set[int]] = None,
+) -> Model:
+    """Compile a FindInputSpec into a BTOR2 Model.
 
-    reg_val = mc.regs[spec.register]
-    rhs_const = m.const(BV64, spec.rhs & ((1 << 64) - 1))
-    predicate = m.op(spec.comparison, BV1, reg_val, rhs_const)
-    fails_pred = m.op("eq", BV1, predicate, m.const(BV1, 0))   # !predicate
-    m.bad(m.op("and", BV1, at_ret, fails_pred))
-    return m
+    bad = (pc at any `ret` in fn) ∧ (regs[R] OP rhs)
+
+    `reachable` means an input exists that makes the predicate hold
+    at a return site; `initial_regs` is the synthesized witness.
+    `unreachable` (bounded) or `proved` (unbounded) means no such
+    input exists within the bound / on any execution path.
+    """
+    mc = _build_machine(binary, spec.function, builder, havoc_regs)
+    mc.m.bad(_return_site_bad(mc, spec, spec.function, negate=False))
+    return mc.m
 
 
 def build_reach_by_name(binary: RISCVBinary, function: str, target_pc: int) -> Model:
