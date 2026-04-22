@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
                            "spurious counterexamples.")
     mode.add_argument("--portfolio", action="store_true",
                       help="Race every available solver backend in parallel "
-                           "(Z3 BMC/Spacer, Bitwuzla if installed, rIC3/btormc "
+                           "(Z3 BMC/Spacer, Bitwuzla/CVC5 if installed, Pono "
                            "if on PATH). First globally-conclusive verdict wins.")
     rc.add_argument("--trace", type=Path,
                     help="Write counterexample markdown to this path "

@@ -8,22 +8,28 @@ reach/verify/... questions.
     Pono         — subprocess bridge to Pono (Stanford):
                      bmc / ind / ic3ia / mbic3 / ic3sa / interp modes;
                      strong QF_ABV support via smt-switch
-    Ric3         — subprocess bridge to rIC3 (Rust PDR);      unbounded
-    BtorMC       — subprocess bridge to BtorMC (BMC/k-ind);   both modes
 
-Subprocess bridges (Ric3, BtorMC) report `unknown` with a clear
-reason when the external binary is not on PATH, so portfolios that
-include them work in environments where only a subset of the tools
-are installed.
+Pono reports `unknown` with a clear reason when its binary isn't
+on PATH, so portfolios that include it work in environments that
+have only a subset of the tools installed.
+
+History: rotor 0.x shipped separate subprocess bridges to rIC3
+(`rotor.solvers.Ric3`) and BtorMC (`rotor.solvers.BtorMC`). Pono
+supersedes both — its `--engine mbic3` / `--engine ic3ia` stand
+in for rIC3, and `--engine bmc` stands in for BtorMC. One
+maintained adapter replaced two unexercised ones. Migrations:
+
+    Ric3(extra_args=[...])  →  Pono(mode="mbic3")
+                          or:  Pono(mode="ic3ia")
+    BtorMC(mode="bmc")      →  Pono(mode="bmc")
+    BtorMC(mode="kind")     →  Pono(mode="ind")
 """
 
 from typing import Optional
 
 from rotor.solvers.base import SolverBackend, SolverResult, Verdict
-from rotor.solvers.btormc import BtorMC
 from rotor.solvers.pono import Pono
 from rotor.solvers.portfolio import Portfolio, PortfolioEntry
-from rotor.solvers.ric3 import Ric3
 from rotor.solvers.z3bv import Z3BMC
 from rotor.solvers.z3spacer import Z3Spacer
 
@@ -52,12 +58,15 @@ def default_portfolio(bound: int = 20, timeout: Optional[float] = 30.0) -> Portf
 
     Always-available (in-process Python): Z3BMC, Z3Spacer. Added
     when their pip packages are importable: BitwuzlaBMC, CVC5BMC.
-    Subprocess bridges (Ric3, BtorMC) are added if their binary is
-    on PATH — otherwise omitted, since including a guaranteed-
-    `unknown` racer would dilute the portfolio's verdict strength.
+    Pono is added (as two racers — `bmc` and `ic3ia`) if its
+    binary is on PATH.
+
+    Unavailable backends are omitted rather than added as guaranteed-
+    `unknown` racers — a noise contributor in the race would dilute
+    the portfolio's verdict strength.
 
     `bound` applies to the bounded engines; unbounded engines
-    (Z3Spacer, Ric3) ignore it. `timeout` is per-entry.
+    (Z3Spacer, Pono IC3IA) ignore it. `timeout` is per-entry.
     """
     p = Portfolio()
     p.add(Z3BMC(), bound=bound, timeout=timeout)
@@ -75,12 +84,6 @@ def default_portfolio(bound: int = 20, timeout: Optional[float] = 30.0) -> Portf
     if pono_bmc.available:
         p.add(pono_bmc, bound=bound, timeout=timeout)
         p.add(Pono(mode="ic3ia"), bound=0, timeout=timeout)
-    ric3 = Ric3()
-    if ric3.available:
-        p.add(ric3, bound=0, timeout=timeout)
-    btormc = BtorMC()
-    if btormc.available:
-        p.add(btormc, bound=bound, timeout=timeout)
     return p
 
 
@@ -93,8 +96,6 @@ __all__ = [
     "BitwuzlaBMC",
     "CVC5BMC",
     "Pono",
-    "Ric3",
-    "BtorMC",
     "Portfolio",
     "PortfolioEntry",
     "default_portfolio",

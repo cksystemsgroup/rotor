@@ -20,7 +20,7 @@ from rotor.ir import (
     QuestionSpec, ReachSpec, SsaEmitter, VerifySpec,
 )
 from rotor.solvers import (
-    BitwuzlaBMC, BtorMC, CVC5BMC, Pono, Portfolio, PortfolioEntry, Ric3, Z3BMC, Z3Spacer,
+    BitwuzlaBMC, CVC5BMC, Pono, Portfolio, PortfolioEntry, Z3BMC, Z3Spacer,
 )
 from rotor.trace import Trace
 
@@ -50,8 +50,6 @@ __all__ = [
     "BitwuzlaBMC",
     "CVC5BMC",
     "Pono",
-    "Ric3",
-    "BtorMC",
     "CegarConfig",
     "cegar_reach",
     "Trace",
