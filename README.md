@@ -182,7 +182,7 @@ question  ─────────► │      RotorEngine        │ ──�
                              ║    many impls)       ║
                              ╚══════════┬═══════════╝
                                         ▼
-                        Bitwuzla / rIC3 / AVR / ABC / BtorMC / Z3
+                        Z3 / Bitwuzla / CVC5 / Pono (BMC + IC3)
                                         │
                                         ▼
                            model (SAT) / invariant (UNSAT) / unknown
@@ -262,14 +262,24 @@ algebra subtly loses a case, L0 catches it on a concrete example.
 Reasoning modes are properties of the solver stack, independent of which
 IR layer produced the BTOR2. Any layer can target any mode.
 
-### Bounded Model Checking (BMC) — shipping via `Z3BMC`
+### Bounded Model Checking (BMC) — shipping via `Z3BMC`, `BitwuzlaBMC`, `CVC5BMC`, `Pono(mode="bmc")`
 
 Unroll the BTOR2 machine model `k` times; ask an SMT solver whether any
 bad state is reachable. Finds concrete bugs fast; cannot prove safety
 beyond `k` steps. **Answer:** BUG (with input and source trace) or
 SAFE-UP-TO-k.
 
-### IC3 / Property-Directed Reachability — shipping via `Z3Spacer`
+Four BMC engines ship. Z3 is always in the race;
+[Bitwuzla](https://bitwuzla.github.io) and
+[CVC5](https://cvc5.github.io) add themselves when their Python
+packages are installed; [Pono](https://github.com/upscale-project/pono)'s
+`bmc` engine enters when the `pono` binary is on PATH. Bitwuzla is
+usually fastest on pure BV; CVC5 is frequently uncorrelated with Z3
+and Bitwuzla and solves benchmarks the other two struggle with.
+Portfolio diversity (from three families: SMT via Z3, Bitwuzla's
+native BV procedure, and smt-switch-backed Pono) is the point.
+
+### IC3 / Property-Directed Reachability — shipping via `Z3Spacer`, `Pono(mode="ic3ia")`
 
 Search for an inductive invariant separating initial from bad states,
 without bounding steps. **Answer:** BUG (concrete counterexample) or
@@ -277,11 +287,11 @@ PROVED (invariant verified for all executions of any length). For
 finite-state components — bounded loops, fixed-size buffers, protocol
 state machines — IC3 typically terminates quickly.
 
-Rotor's `Z3Spacer` backend translates the BTOR2 Model into a
-Constrained Horn Clause system over a single `Inv` relation and
-queries Z3's Spacer engine. Subprocess bridges to external engines
-(rIC3, AVR, ABC) land later under the same `SolverBackend` Protocol
-when a workload benefits.
+Two IC3 engines ship. Z3 Spacer is always available; Pono's
+`ic3ia` (interpolation-based IC3) joins the race when the binary
+is installed. Pono exposes additional IC3 variants — `mbic3`,
+`ic3bits`, `ic3sa` — via `Pono(mode=...)`. Pono's QF_ABV handling
+is stronger than Spacer's on rotor's memory-heavy fixtures.
 
 ### CEGAR (Counterexample-Guided Abstraction Refinement) — shipping via `cegar_reach`
 

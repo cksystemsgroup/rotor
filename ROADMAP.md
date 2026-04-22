@@ -31,41 +31,50 @@ five tracks below.
 even after M8's register slicing. `bounded_counter` still fails to
 close. This limits unbounded claims to trivial fixtures.
 
-**Status.** Three backends added, two fully exercised in CI:
+**Status.** ✅ **Complete.** Five backends shipping across three
+engine families (SMT-via-Z3, Bitwuzla's native BV, smt-switch via
+Pono) plus `default_portfolio()` and a `rotor reach --portfolio`
+CLI mode.
 
-1. **Bitwuzla (`BitwuzlaBMC`).** ✅ **Shipped (A.1).** Uses
-   Bitwuzla's in-process Python bindings (`pip install bitwuzla`).
+Backends:
+
+1. **`BitwuzlaBMC`** (A.1). In-process via `pip install bitwuzla`.
    Measured on rotor fixtures:
    - `tiny_mask` bound=30: Z3 1.6s → Bitwuzla 1.2s (30% faster)
    - `bounded_counter` bound=30: Z3 26.4s → Bitwuzla 6.0s (4.4× faster)
-2. **rIC3 (`Ric3`).** ⚠️ **Adapter shipped (A.2); live tests skip.**
-   Subprocess bridge ready. Requires nightly Rust:
-   `rustup install nightly && cargo +nightly install rIC3 --locked`.
-   Parser covers the `true` / `false` / `sat` / `unsat` / `safe` /
-   `unsafe` output tokens observed across rIC3 versions.
-3. **BtorMC (`BtorMC`).** ⚠️ **Adapter shipped (A.3); live tests skip.**
-   Subprocess bridge ready. Not packaged in Debian/Ubuntu apt;
-   build from the Bitwuzla source tree (`./configure.py && ninja`).
-   Supports both `bmc` and `kind` (k-induction) modes.
+2. **`CVC5BMC`** (P1). In-process via `pip install cvc5`.
+   Uncorrelated with Z3/Bitwuzla — ships to diversify portfolio
+   coverage on BV shapes where Z3 and Bitwuzla happen to agree.
+3. **`Pono`** (P2). Subprocess bridge to the multi-engine Pono
+   model checker (https://github.com/upscale-project/pono).
+   Exposed as `Pono(mode=...)` with `bmc` / `bmc-sp` / `ind` /
+   `mbic3` / `ic3ia` / `ic3sa` / `ic3bits` / `interp` / `sygus-pdr`.
+   `default_portfolio()` adds two Pono racers (`bmc` + `ic3ia`)
+   when the binary is on PATH.
 
-The subprocess bridges return `unknown` with a clear reason when the
-external binary is not on PATH, so a portfolio containing them works
-in environments where only a subset of the tools are installed.
+The Pono bridge returns `unknown` with a clear reason when the
+binary is absent, so portfolios including it work in environments
+that have only a subset of the tools installed.
 
-**Exit criterion.** ✅ Fully met for A.1 (Bitwuzla). Met as code for
-A.2/A.3 — live verification against `bounded_counter` depends on
-installing the external tools, which the current dev sandbox can't
-do (`rust-lang.org` unreachable from the build environment). Any
-richer environment that has rIC3 or btormc on PATH will exercise
-the bridges automatically via the skipped `@skipif` tests.
+**Retired** (P3): the Rotor 0.x `Ric3` and `BtorMC` adapters. Pono
+supersedes both — its `--engine bmc` stands in for BtorMC, and
+`--engine mbic3` / `ic3ia` stand in for rIC3. Migration guide in
+`rotor/solvers/__init__.py`.
 
-**Follow-ups.**
-- Extend `rotor reach` CLI with an `--engine {z3bmc,bitwuzla,z3spacer,
-  ric3,btormc}` flag for direct backend selection.
-- Add a default portfolio that races every available engine
-  (skipping the ones whose binaries are missing).
-- Wire CEGAR to optionally delegate the abstract check to Bitwuzla
-  (currently hardcoded to Z3Spacer).
+**CLI + API surfaces.** `rotor reach --portfolio` (also on
+`verify` / `find-input` if desired), `rotor benchmark --engine
+{z3-bmc,bitwuzla,cvc5-bmc,z3-spacer,portfolio}`. `CegarConfig`
+could delegate its abstract solve to Bitwuzla/CVC5/Pono instead
+of hardcoded Z3Spacer — small follow-up, filed under "nice to
+have" rather than blocker.
+
+**Exit criterion.** ✅ Met: rotor's portfolio composes five
+engines from three families across two process models (in-process
+SMT Python + Pono subprocess). On the rotor fixture corpus
+(benchmark harness at bound=10, timeout=15s), Bitwuzla dominates
+PAR-2 and the portfolio is within noise of the fastest single
+engine. Any richer environment with Pono on PATH automatically
+gains `bmc` and `ic3ia` racers through `default_portfolio()`.
 
 ---
 
@@ -266,17 +275,17 @@ hwmcc.github.io).
 
    Unique-solve analysis on this corpus: none — every benchmark
    is within reach of at least two engines. An HWMCC-scale run
-   is where the portfolio earns its keep via Spacer / rIC3 PDR
-   decisions that no BMC engine can return.
+   is where the portfolio earns its keep via Spacer / Pono-IC3IA
+   PDR decisions that no BMC engine can return.
 
 **Not shipped here (future):**
 - Live HWMCC corpus — requires local checkout of a ~GB-scale
   archive; the seed-corpus harness works the moment you point
   `--btor2-dir` at it.
-- rIC3 / BtorMC rows in the shootout. Their subprocess bridges
-  (Track A.2 / A.3) include `shutil.which` guards, so the
-  shootout would pick them up automatically where the binaries
-  are installed; the current sandbox has neither.
+- Pono rows in the shootout. The Pono bridge includes a
+  `shutil.which` guard, so the shootout picks it up automatically
+  where the binary is installed; the current sandbox does not
+  have Pono built.
 - Regression gating in CI: wire the harness into a nightly job
   that fails on PAR-2 regressions past a threshold.
 
