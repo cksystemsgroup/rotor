@@ -32,11 +32,11 @@ structure lands when a consumer demands it.
 from __future__ import annotations
 
 from rotor.binary import RISCVBinary
-from rotor.btor2.builder import build_reach
+from rotor.btor2.builder import build_reach, build_verify
 from rotor.btor2.nodes import Model
 from rotor.ir.dag import DagBuilder
 from rotor.ir.liveness import dead_registers
-from rotor.ir.spec import QuestionSpec, ReachSpec
+from rotor.ir.spec import QuestionSpec, ReachSpec, VerifySpec
 
 
 class SsaEmitter:
@@ -59,13 +59,27 @@ class SsaEmitter:
         return self._binary
 
     def emit(self, spec: QuestionSpec) -> Model:
+        fn_name = getattr(spec, "function", None)
+        if fn_name is None:
+            raise TypeError(
+                f"{type(self).__name__} does not support spec type "
+                f"{type(spec).__name__}"
+            )
+        fn = self._binary.function(fn_name)
+        dead = set(dead_registers(self._binary, fn))
         if isinstance(spec, ReachSpec):
-            fn = self._binary.function(spec.function)
-            dead = set(dead_registers(self._binary, fn))
             return build_reach(
                 self._binary, spec,
-                builder=DagBuilder(),
-                havoc_regs=dead,
+                builder=DagBuilder(), havoc_regs=dead,
+            )
+        if isinstance(spec, VerifySpec):
+            # The verify predicate reads spec.register at return sites,
+            # so that register must stay live even if the function itself
+            # never branches on it.
+            dead.discard(spec.register)
+            return build_verify(
+                self._binary, spec,
+                builder=DagBuilder(), havoc_regs=dead,
             )
         raise TypeError(
             f"{type(self).__name__} does not support spec type "

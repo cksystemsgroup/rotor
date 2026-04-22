@@ -90,6 +90,28 @@ def build_parser() -> argparse.ArgumentParser:
                          "instead of stderr.")
     rc.set_defaults(func=cmd_reach)
 
+    vf = sub.add_parser(
+        "verify",
+        help="Verify a register-comparison predicate at every ret of a function.",
+    )
+    vf.add_argument("elf", type=Path)
+    vf.add_argument("--function", required=True)
+    vf.add_argument("--register", required=True,
+                    help="Register to read at each ret — ABI name (e.g. a0) "
+                         "or index (0..31).")
+    vf.add_argument("--op", required=True,
+                    choices=["eq", "neq", "slt", "slte", "sgt", "sgte",
+                             "ult", "ulte", "ugt", "ugte"],
+                    help="Comparison operator. Signedness is encoded in the name.")
+    vf.add_argument("--value", required=True,
+                    help="Right-hand side of the predicate (hex 0x.. or decimal, "
+                         "signed).")
+    vf.add_argument("--bound", type=int, default=20,
+                    help="BMC unroll bound (default: 20).")
+    vf.add_argument("--unbounded", action="store_true",
+                    help="Use Z3 Spacer for unbounded verification.")
+    vf.set_defaults(func=cmd_verify)
+
     rt = sub.add_parser(
         "btor2-roundtrip",
         help="Parse a BTOR2 file and re-emit it (diagnostics on stderr).",
@@ -203,6 +225,70 @@ def cmd_reach(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
         else:
             print(md, file=err)
 
+    if r.verdict == "reachable":
+        return EXIT_FOUND
+    if r.verdict in ("unreachable", "proved"):
+        return EXIT_OK
+    return EXIT_UNKNOWN
+
+
+_ABI_TO_INDEX = {
+    "zero": 0, "ra": 1, "sp": 2, "gp": 3, "tp": 4,
+    "t0": 5, "t1": 6, "t2": 7, "s0": 8, "fp": 8, "s1": 9,
+    "a0": 10, "a1": 11, "a2": 12, "a3": 13, "a4": 14,
+    "a5": 15, "a6": 16, "a7": 17,
+    "s2": 18, "s3": 19, "s4": 20, "s5": 21, "s6": 22,
+    "s7": 23, "s8": 24, "s9": 25, "s10": 26, "s11": 27,
+    "t3": 28, "t4": 29, "t5": 30, "t6": 31,
+}
+
+
+def _parse_register(spec: str) -> int:
+    """Accept either an ABI name (`a0`, `ra`, ...) or an index (`10`, `x10`)."""
+    s = spec.strip().lower()
+    if s in _ABI_TO_INDEX:
+        return _ABI_TO_INDEX[s]
+    if s.startswith("x") and s[1:].isdigit():
+        return int(s[1:])
+    if s.isdigit():
+        return int(s)
+    raise ValueError(f"unrecognized register spec: {spec!r}")
+
+
+def cmd_verify(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
+    register = _parse_register(args.register)
+    rhs = _parse_int(args.value)
+    with RotorAPI(args.elf, default_bound=args.bound) as api:
+        r = api.verify(
+            function=args.function,
+            register=register,
+            comparison=args.op,
+            rhs=rhs,
+            bound=args.bound,
+            unbounded=args.unbounded,
+        )
+
+    print(f"verdict  : {r.verdict}", file=out)
+    print(f"bound    : {r.bound}", file=out)
+    if r.step is not None:
+        print(f"step     : {r.step}", file=out)
+    print(f"elapsed  : {r.elapsed * 1000:.1f}ms", file=out)
+    print(f"backend  : {r.backend}", file=out)
+    if r.invariant is not None:
+        print(f"invariant: {r.invariant}", file=out)
+    if r.initial_regs:
+        # Show the CEX initial regs compactly so users can see which
+        # input makes the predicate fail.
+        nonzero = {k: v for k, v in r.initial_regs.items() if v}
+        if nonzero:
+            print(f"initial  : "
+                  + ", ".join(f"{k}=0x{v:x}" for k, v in sorted(nonzero.items())),
+                  file=out)
+
+    # Verify exit codes mirror reach, with the polarity stated explicitly:
+    # reachable (predicate can fail)  → EXIT_FOUND (1)
+    # unreachable/proved (predicate holds)  → EXIT_OK (0)
+    # unknown → EXIT_UNKNOWN (2)
     if r.verdict == "reachable":
         return EXIT_FOUND
     if r.verdict in ("unreachable", "proved"):

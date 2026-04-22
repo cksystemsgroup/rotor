@@ -158,11 +158,16 @@ want anything beyond reachability hit a wall.
 
 **Deliverable.**
 
-1. **`verify(function, predicate)`** — user supplies a Python
-   expression over live variables
-   (`lambda regs, mem: regs['a0'] >= 0`); rotor compiles to
-   `bad = !predicate`. Unbounded mode routes to Spacer, returns
-   invariant or CEX.
+1. **`verify(function, predicate)`** — ✅ **Shipped (D.1).**
+   Register-comparison predicate DSL: `verify(function, register,
+   comparison, rhs)` evaluates `regs[register] OP rhs` at every
+   `ret` inside the function; rotor compiles to `bad = (pc at
+   ret) ∧ ¬predicate`. Bounded by default, `unbounded=True`
+   routes to Z3 Spacer. Exposed as `api.verify(...)` and
+   `rotor verify` CLI subcommand. Reuses `ReachResult` (aliased
+   as `VerifyResult`) since both verbs share the same verdict
+   vocabulary. Richer predicates (lambdas, conjunctions,
+   memory-region constraints) are future work.
 2. **`find_input(function, output_condition)`** — `bad =
    output_condition` under BMC, return witness as SARIF / JSON /
    trace.

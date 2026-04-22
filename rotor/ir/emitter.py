@@ -19,11 +19,11 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from rotor.binary import RISCVBinary
-from rotor.btor2.builder import build_reach
+from rotor.btor2.builder import build_reach, build_verify
 from rotor.btor2.nodes import Model
 from rotor.btor2.printer import to_text
 from rotor.ir.dag import DagBuilder
-from rotor.ir.spec import QuestionSpec, ReachSpec
+from rotor.ir.spec import QuestionSpec, ReachSpec, VerifySpec
 
 
 @runtime_checkable
@@ -71,6 +71,8 @@ class IdentityEmitter:
     def emit(self, spec: QuestionSpec) -> Model:
         if isinstance(spec, ReachSpec):
             return build_reach(self._binary, spec)
+        if isinstance(spec, VerifySpec):
+            return build_verify(self._binary, spec)
         raise TypeError(
             f"{type(self).__name__} does not support spec type "
             f"{type(spec).__name__}"
@@ -98,6 +100,8 @@ class DagEmitter:
     def emit(self, spec: QuestionSpec) -> Model:
         if isinstance(spec, ReachSpec):
             return build_reach(self._binary, spec, builder=DagBuilder())
+        if isinstance(spec, VerifySpec):
+            return build_verify(self._binary, spec, builder=DagBuilder())
         raise TypeError(
             f"{type(self).__name__} does not support spec type "
             f"{type(spec).__name__}"

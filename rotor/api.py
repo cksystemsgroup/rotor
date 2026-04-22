@@ -36,6 +36,14 @@ class ReachResult:
     invariant: Optional[str] = None    # certificate when verdict == "proved"
 
 
+# `verify` reuses `ReachResult` — the two questions share the same
+# verdict vocabulary and counterexample shape. The only asymmetry is
+# interpretation: `reachable` on a verify means the predicate FAILED,
+# not that something was "reached". Use the verb you called to
+# interpret the result.
+VerifyResult = ReachResult
+
+
 class RotorAPI:
     def __init__(
         self,
@@ -99,6 +107,55 @@ class RotorAPI:
                 function, target_pc, bound=bound, timeout=timeout,
             )
         return self._finalize(function, target_pc, result)
+
+    def verify(
+        self,
+        function: str,
+        register: int,
+        comparison: str,
+        rhs: int,
+        bound: Optional[int] = None,
+        timeout: Optional[float] = None,
+        unbounded: bool = False,
+    ) -> VerifyResult:
+        """Verify that `regs[register] <comparison> rhs` holds at every
+        `ret` of `function`.
+
+        Interpretation mirrors `can_reach` with the polarity flipped —
+        `reachable` here means the predicate can FAIL on some input,
+        with `initial_regs` / `trace` identifying the counterexample;
+        `unreachable` means safe up to the bound; `proved` means safe
+        on every execution path (only from `unbounded=True`).
+
+        `register` is the ABI index (10 = a0 = RISC-V return value).
+        `comparison` is one of: eq, neq, slt, slte, sgt, sgte, ult,
+        ulte, ugt, ugte. Signedness is encoded in the comparison name.
+        `rhs` is the 64-bit integer right-hand side; negative values
+        are masked into two's-complement automatically.
+        """
+        result = self._engine.check_verify(
+            function, register, comparison, rhs,
+            bound=bound, timeout=timeout, unbounded=unbounded,
+        )
+        return self._finalize_verify(function, register, comparison, rhs, result)
+
+    def _finalize_verify(
+        self, function: str, register: int, comparison: str, rhs: int, result,
+    ):
+        # Verify CEXs live at a return site with a specific register
+        # failing the predicate. We don't produce a trace today —
+        # which specific ret the CEX hit isn't surfaced by the solver
+        # backends — but initial_regs still identify the failing input.
+        return ReachResult(
+            verdict=result.verdict,
+            bound=result.bound,
+            step=result.step,
+            initial_regs=result.initial_regs,
+            elapsed=result.elapsed,
+            backend=result.backend,
+            trace=None,
+            invariant=result.invariant,
+        )
 
     def cegar_reach(
         self,

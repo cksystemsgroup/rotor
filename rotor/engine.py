@@ -18,7 +18,7 @@ from typing import Callable, Optional, Union
 
 from rotor.binary import RISCVBinary
 from rotor.ir.emitter import BTOR2Emitter, IdentityEmitter
-from rotor.ir.spec import ReachSpec
+from rotor.ir.spec import Comparison, ReachSpec, VerifySpec
 from rotor.solvers.base import SolverBackend, SolverResult
 from rotor.solvers.portfolio import Portfolio
 from rotor.solvers.z3bv import Z3BMC
@@ -96,6 +96,44 @@ class RotorEngine:
         return Z3Spacer().check_reach(
             model,
             bound=0,
+            timeout=timeout if timeout is not None else self.config.default_timeout,
+        )
+
+    def check_verify(
+        self,
+        function: str,
+        register: int,
+        comparison: Comparison,
+        rhs: int,
+        bound: Optional[int] = None,
+        timeout: Optional[float] = None,
+        unbounded: bool = False,
+    ) -> SolverResult:
+        """Verify that `regs[register] <comparison> rhs` holds at every
+        return site of `function`.
+
+        Bounded by default (BMC). `unbounded=True` routes to Z3 Spacer
+        for an inductive-invariant answer. Both modes return `proved`
+        when the predicate holds on every path (Spacer; BMC answers
+        `unreachable` up to the bound instead), `reachable` when the
+        predicate can fail, or `unknown`.
+        """
+        spec = VerifySpec(
+            function=function, register=register,
+            comparison=comparison, rhs=rhs,
+        )
+        model = self._emitter.emit(spec)
+        if unbounded:
+            return Z3Spacer().check_reach(
+                model, bound=0,
+                timeout=timeout if timeout is not None else self.config.default_timeout,
+            )
+        executor = self._executor()
+        if isinstance(executor, Portfolio):
+            return executor.check_reach(model)
+        return executor.check_reach(
+            model,
+            bound=bound if bound is not None else self.config.default_bound,
             timeout=timeout if timeout is not None else self.config.default_timeout,
         )
 
