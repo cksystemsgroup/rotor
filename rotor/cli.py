@@ -178,7 +178,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Write the Markdown report to this path "
                          "instead of stdout.")
     bn.add_argument("--engine", action="append",
-                    choices=["z3-bmc", "bitwuzla", "z3-spacer", "portfolio"],
+                    choices=["z3-bmc", "bitwuzla", "cvc5-bmc", "z3-spacer", "portfolio"],
                     help="Limit the shootout to specific engines. "
                          "Repeatable. Default: all in-process engines + "
                          "portfolio.")
@@ -452,8 +452,14 @@ def cmd_benchmark(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
     ]
     try:
         import bitwuzla                              # noqa: F401
-        from rotor.solvers import BitwuzlaBMC
+        from rotor.solvers.bitwuzla import BitwuzlaBMC
         all_engines.append(("bitwuzla", lambda: BitwuzlaBMC()))
+    except ImportError:                              # pragma: no cover
+        pass
+    try:
+        import cvc5                                  # noqa: F401
+        from rotor.solvers.cvc5bmc import CVC5BMC
+        all_engines.append(("cvc5-bmc", lambda: CVC5BMC()))
     except ImportError:                              # pragma: no cover
         pass
     all_engines.append((
