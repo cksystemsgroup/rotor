@@ -123,31 +123,59 @@ Track C's territory.
 
 ## Track C — Non-leaf function support
 
-**Blocker.** Every interesting function calls others. Rotor's
-current encoding treats the PC range as closed; `jal` outside the
-function is modeled as "exits the function" with pc stuck.
-Properties that span calls are unreachable from the analyzer.
+**Status.** ✅ **Shipped** (phases C.1–C.3 in one commit).
 
-**Deliverable.**
+The key insight: Phase 6's ra constraint was a global invariant
+— it required `ra ∉ fn.pc_range` at every cycle. Inside the
+analyzed set, a `jal` legitimately writes an intra-set PC
+(`pc + 4`) into ra during execution; the global form would
+reject that trace. Track C moves the ra constraint to cycle-0
+only by driving ra's init from a fresh `init_ra` input and
+constraining the input rather than ra itself. Once that's done,
+multi-function analysis composes naturally — the dispatch tree
+just grows to cover all included functions and `jal` + `ret`
+update pc like any other instruction.
 
-1. **`EntryAssumptions` object** generalizes Phase 6's
-   `ra`-constraint. Models a realistic call frame: `sp` in a
-   stack region, `ra` outside the analyzed set, `a0..a7` as
-   arguments, callee-saved registers preserved per ABI.
-2. **Call-graph scoping** — two modes: inline (expand callee's
-   model into caller) and abstract (callee as havoc on
-   callee-clobbered regs plus its memory footprint).
-3. **Multi-function `build_reach`** — compile over a set of
-   functions, not a single one.
-4. **Scope-aware `ra`-outside-fn constraint** — `ra` points
-   outside the *analyzed set*, not just the current function.
+**Delivered:**
 
-**Exit criterion.** A fixture with a non-leaf function whose
-property depends on the callee's return value is `can_reach`-able,
-and `cegar_reach` still works end-to-end.
+1. ✅ **`EntryAssumptions` dataclass** (`rotor.btor2.builder`)
+   — first-class object holding `excluded_pc_ranges`. Future
+   sp / a0..a7 / callee-saved fields slot in alongside without
+   another ra-style rewrite. `from_functions(binary, names)`
+   constructor computes the union of PC ranges from a list.
+2. ✅ **Multi-function `build_reach` / `build_verify` /
+   `build_find_input`** via a new `include_fns` parameter.
+   When provided, the listed function names are decoded into
+   the same dispatch tree as the entry fn; the ra constraint
+   widens to exclude the union; `_return_site_bad` filters
+   ret-PC enumeration to the entry fn only (callee rets are
+   not observation sites).
+3. ✅ **Scope-aware ra constraint** — `_assume_ra_outside_ranges`
+   builds an AND over each excluded range.
+4. **Call-graph scoping** — explicit (user lists callees via
+   `--include-fn`) is shipped. Automatic static discovery from
+   `jal` immediates is a natural follow-up but not required
+   for the exit criterion.
 
-**Effort estimate.** ~2 weeks. Design-heavy; many architectural
-seams touched.
+**Exposed at:**
+- `api.can_reach(..., include_fns=[...])`
+- `api.verify(..., include_fns=[...])`
+- `api.find_input(..., include_fns=[...])`
+- `rotor reach --include-fn CALLEE` (repeatable)
+- Same flag on `rotor verify` / `rotor find-input`
+
+**Exit criterion.** ✅ Met. `tests/fixtures/nonleaf.elf` is a
+`double_square` function that makes a real `jal` to `square`.
+Without `include_fns`, the ret is `unreachable` (PC stuck on
+square.start); with `include_fns=["square"]`, the ret is
+`reachable` in 8 steps, with a ra witness outside the analyzed
+set and sp unrestricted.
+
+**Not shipped (future):**
+- Automatic callee discovery from static `jal` immediates.
+- Shared-memory story for non-leaf equivalence.
+- Unbounded (Spacer) path for `include_fns` — Spacer bypasses
+  the emitter seam and doesn't thread include_fns today.
 
 ---
 

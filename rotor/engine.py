@@ -66,9 +66,10 @@ class RotorEngine:
         target_pc: int,
         bound: Optional[int] = None,
         timeout: Optional[float] = None,
+        include_fns: Optional[list[str]] = None,
     ) -> SolverResult:
         spec = ReachSpec(function=function, target_pc=target_pc)
-        model = self._emitter.emit(spec)
+        model = self._emit(spec, include_fns)
         executor = self._executor()
         if isinstance(executor, Portfolio):
             return executor.check_reach(model)
@@ -77,6 +78,24 @@ class RotorEngine:
             bound=bound if bound is not None else self.config.default_bound,
             timeout=timeout if timeout is not None else self.config.default_timeout,
         )
+
+    def _emit(self, spec, include_fns):
+        """Route a spec through the emitter, passing include_fns when
+        the non-leaf option is in use. The emitter Protocol only
+        promises `emit(spec)`, so IR emitters that don't understand
+        `include_fns` fall back to the single-fn path. This is a
+        pragmatic workaround: Track C uses include_fns only against
+        IdentityEmitter (L0) today; L1/L2 support lands when users
+        need it."""
+        if include_fns and isinstance(self._emitter, IdentityEmitter):
+            from rotor.btor2.builder import build_reach, build_verify, build_find_input
+            if isinstance(spec, ReachSpec):
+                return build_reach(self.binary, spec, include_fns=list(include_fns))
+            if isinstance(spec, VerifySpec):
+                return build_verify(self.binary, spec, include_fns=list(include_fns))
+            if isinstance(spec, FindInputSpec):
+                return build_find_input(self.binary, spec, include_fns=list(include_fns))
+        return self._emitter.emit(spec)
 
     def check_reach_unbounded(
         self,
@@ -108,6 +127,7 @@ class RotorEngine:
         bound: Optional[int] = None,
         timeout: Optional[float] = None,
         unbounded: bool = False,
+        include_fns: Optional[list[str]] = None,
     ) -> SolverResult:
         """Verify that `regs[register] <comparison> rhs` holds at every
         return site of `function`.
@@ -122,7 +142,7 @@ class RotorEngine:
             function=function, register=register,
             comparison=comparison, rhs=rhs,
         )
-        model = self._emitter.emit(spec)
+        model = self._emit(spec, include_fns)
         if unbounded:
             return Z3Spacer().check_reach(
                 model, bound=0,
@@ -145,6 +165,7 @@ class RotorEngine:
         rhs: int,
         bound: Optional[int] = None,
         timeout: Optional[float] = None,
+        include_fns: Optional[list[str]] = None,
     ) -> SolverResult:
         """Synthesize an initial-register assignment such that
         `regs[register] <comparison> rhs` holds at a return site of
@@ -161,7 +182,7 @@ class RotorEngine:
             function=function, register=register,
             comparison=comparison, rhs=rhs,
         )
-        model = self._emitter.emit(spec)
+        model = self._emit(spec, include_fns)
         executor = self._executor()
         if isinstance(executor, Portfolio):
             return executor.check_reach(model)

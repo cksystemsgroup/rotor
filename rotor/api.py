@@ -95,6 +95,7 @@ class RotorAPI:
         bound: Optional[int] = None,
         timeout: Optional[float] = None,
         unbounded: bool = False,
+        include_fns: Optional[list[str]] = None,
     ) -> ReachResult:
         """Reachability check. Default is bounded BMC.
 
@@ -105,12 +106,19 @@ class RotorAPI:
         verdicts from unbounded mode have no step/trace.
         """
         if unbounded:
+            if include_fns:
+                raise ValueError(
+                    "include_fns is not yet supported with unbounded=True; "
+                    "the Spacer encoding bypasses the emitter seam used by "
+                    "Track C's multi-function plumbing"
+                )
             result = self._engine.check_reach_unbounded(
                 function, target_pc, timeout=timeout,
             )
         else:
             result = self._engine.check_reach(
                 function, target_pc, bound=bound, timeout=timeout,
+                include_fns=include_fns,
             )
         return self._finalize(function, target_pc, result)
 
@@ -123,6 +131,7 @@ class RotorAPI:
         bound: Optional[int] = None,
         timeout: Optional[float] = None,
         unbounded: bool = False,
+        include_fns: Optional[list[str]] = None,
     ) -> VerifyResult:
         """Verify that `regs[register] <comparison> rhs` holds at every
         `ret` of `function`.
@@ -139,9 +148,14 @@ class RotorAPI:
         `rhs` is the 64-bit integer right-hand side; negative values
         are masked into two's-complement automatically.
         """
+        if unbounded and include_fns:
+            raise ValueError(
+                "include_fns is not yet supported with unbounded=True"
+            )
         result = self._engine.check_verify(
             function, register, comparison, rhs,
             bound=bound, timeout=timeout, unbounded=unbounded,
+            include_fns=include_fns,
         )
         return self._finalize_verify(function, register, comparison, rhs, result)
 
@@ -171,6 +185,7 @@ class RotorAPI:
         rhs: int,
         bound: Optional[int] = None,
         timeout: Optional[float] = None,
+        include_fns: Optional[list[str]] = None,
     ) -> "FindInputResult":
         """Synthesize an input that makes `regs[register] <comparison>
         rhs` hold at a return site of `function`.
@@ -188,6 +203,7 @@ class RotorAPI:
         result = self._engine.check_find_input(
             function, register, comparison, rhs,
             bound=bound, timeout=timeout,
+            include_fns=include_fns,
         )
         return ReachResult(
             verdict=result.verdict,

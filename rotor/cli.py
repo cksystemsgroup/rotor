@@ -88,6 +88,10 @@ def build_parser() -> argparse.ArgumentParser:
     rc.add_argument("--trace", type=Path,
                     help="Write counterexample markdown to this path "
                          "instead of stderr.")
+    rc.add_argument("--include-fn", action="append", default=[],
+                    help="Additional function to fold into the dispatch "
+                         "so jal from --function lands on real instructions. "
+                         "Repeatable. Required for non-leaf analysis.")
     rc.set_defaults(func=cmd_reach)
 
     vf = sub.add_parser(
@@ -110,6 +114,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="BMC unroll bound (default: 20).")
     vf.add_argument("--unbounded", action="store_true",
                     help="Use Z3 Spacer for unbounded verification.")
+    vf.add_argument("--include-fn", action="append", default=[],
+                    help="Additional function to fold into the dispatch. "
+                         "Repeatable. Required for non-leaf analysis.")
     vf.set_defaults(func=cmd_verify)
 
     fi = sub.add_parser(
@@ -128,6 +135,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Right-hand side of the predicate (hex 0x.. or decimal).")
     fi.add_argument("--bound", type=int, default=20,
                     help="BMC unroll bound (default: 20).")
+    fi.add_argument("--include-fn", action="append", default=[],
+                    help="Additional function to fold into the dispatch. "
+                         "Repeatable. Required for non-leaf analysis.")
     fi.set_defaults(func=cmd_find_input)
 
     eq = sub.add_parser(
@@ -236,6 +246,7 @@ def cmd_reach(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
     from rotor.solvers import default_portfolio
     target = _parse_int(args.target)
     portfolio = default_portfolio(bound=args.bound) if args.portfolio else None
+    include = args.include_fn or None
     with RotorAPI(args.elf, default_bound=args.bound, portfolio=portfolio) as api:
         if args.cegar:
             r = api.cegar_reach(function=args.function, target_pc=target)
@@ -243,6 +254,7 @@ def cmd_reach(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
             r = api.can_reach(
                 function=args.function, target_pc=target,
                 bound=args.bound, unbounded=args.unbounded,
+                include_fns=include,
             )
 
     print(f"verdict  : {r.verdict}", file=out)
@@ -295,6 +307,7 @@ def _parse_register(spec: str) -> int:
 def cmd_verify(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
     register = _parse_register(args.register)
     rhs = _parse_int(args.value)
+    include = args.include_fn or None
     with RotorAPI(args.elf, default_bound=args.bound) as api:
         r = api.verify(
             function=args.function,
@@ -303,6 +316,7 @@ def cmd_verify(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
             rhs=rhs,
             bound=args.bound,
             unbounded=args.unbounded,
+            include_fns=include,
         )
 
     print(f"verdict  : {r.verdict}", file=out)
@@ -336,6 +350,7 @@ def cmd_verify(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
 def cmd_find_input(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
     register = _parse_register(args.register)
     rhs = _parse_int(args.value)
+    include = args.include_fn or None
     with RotorAPI(args.elf, default_bound=args.bound) as api:
         r = api.find_input(
             function=args.function,
@@ -343,6 +358,7 @@ def cmd_find_input(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
             comparison=args.op,
             rhs=rhs,
             bound=args.bound,
+            include_fns=include,
         )
 
     print(f"verdict  : {r.verdict}", file=out)

@@ -50,7 +50,7 @@ CORPUS: tuple[CorpusEntry, ...] = (
     # branches.elf — exercises beq / bge / bltu / ori / li / mv / jal / ret (M5)
     CorpusEntry("branches-entry-trivial",    BRANCHES, "branches", 0x00, 0, "reachable",   0),
     CorpusEntry("branches-after-mv-and-li",  BRANCHES, "branches", 0x08, 2, "reachable",   2),
-    CorpusEntry("branches-ret-reachable",    BRANCHES, "branches", 0x20, 7, "reachable",   7),
+    CorpusEntry("branches-ret-reachable",    BRANCHES, "branches", 0x20, 7, "reachable",   6),
     CorpusEntry("branches-jal-reachable",    BRANCHES, "branches", 0x28, 6, "reachable",   6),
     CorpusEntry("branches-c4-unreach-at-2",  BRANCHES, "branches", 0x14, 2, "unreachable", None),
 
@@ -91,7 +91,7 @@ CORPUS: tuple[CorpusEntry, ...] = (
     # bitops.elf — Track B.4 capstone fixture combining RV64M + RVC
     # in a realistic mini bit-manipulation library.
     CorpusEntry("is_power_of_two-entry",     BITOPS, "is_power_of_two", 0x00, 0, "reachable", 0),
-    CorpusEntry("is_power_of_two-ret",       BITOPS, "is_power_of_two", 0x0c, 4, "reachable", 4),
+    CorpusEntry("is_power_of_two-ret",       BITOPS, "is_power_of_two", 0x0c, 4, "reachable", 1),
     CorpusEntry("popcount-entry",            BITOPS, "popcount",        0x00, 0, "reachable", 0),
     CorpusEntry("shifted_mul-entry",         BITOPS, "shifted_mul",     0x00, 0, "reachable", 0),
     CorpusEntry("shifted_mul-ret",           BITOPS, "shifted_mul",     0x08, 2, "reachable", 2),

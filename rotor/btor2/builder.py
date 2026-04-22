@@ -70,6 +70,41 @@ class UnsupportedInstruction(ValueError):
         self.word = word
 
 
+@dataclass(frozen=True)
+class EntryAssumptions:
+    """Cycle-0 assumptions about the machine state at function entry.
+
+    Rotor's early builds hard-coded one assumption directly into
+    `_build_machine`: the caller's return address (`ra`) lies
+    outside the analyzed function's PC range, so `ret` doesn't
+    spuriously land back inside the same function under solver
+    pressure. Track C promoted this to a first-class object so that:
+
+    1. Non-leaf analyses can extend `excluded_pc_ranges` to cover
+       every function in the analyzed set — a callee `ret` must
+       leave the set, while a caller's intra-set `jal` writing
+       `pc+4` into ra during execution stays unconstrained.
+    2. Future sp / argument / callee-saved assumptions slot in as
+       new fields without another ra-style hard-coded rewrite.
+
+    The scope-aware refactor that made this useful was moving the
+    ra constraint from a global invariant to a cycle-0 constraint.
+    `_build_machine` now ties `ra` to a fresh input `init_ra`;
+    constraints apply to that input (which is only used in init),
+    so the ra value at later cycles — e.g. after a jal wrote `pc+4`
+    — is free, as it should be.
+    """
+    excluded_pc_ranges: tuple[tuple[int, int], ...] = ()
+
+    @staticmethod
+    def from_functions(binary: RISCVBinary, function_names) -> "EntryAssumptions":
+        ranges = []
+        for name in function_names:
+            fn = binary.function(name)
+            ranges.append((fn.start, fn.end))
+        return EntryAssumptions(excluded_pc_ranges=tuple(ranges))
+
+
 @dataclass
 class _Machine:
     """Internal: the state and structure shared by every question-
@@ -82,6 +117,33 @@ class _Machine:
     pc: Node
     mem: Optional[Node]
     decoded: list[tuple]                             # list[(Instruction, Decoded)]
+    entry_fn: "Function"                             # observation scope for verify /
+                                                     # find_input / equivalent (callee
+                                                     # rets are ignored)
+
+
+def _assume_ra_outside_ranges(m: Model, ra_source: Node,
+                              ranges: tuple[tuple[int, int], ...]) -> None:
+    """Constrain `ra_source` to lie outside every `(start, end)`
+    range (bit-0 masked off to match `jalr`'s `& ~1` target).
+
+    Expressed as a BTOR2 constraint; since `ra_source` is typically
+    a cycle-0-only BTOR2 input (driving ra's init), the constraint
+    bites only at entry — subsequent cycles in which `ra` holds an
+    intra-set PC (e.g. after a `jal` wrote `pc+4`) are unaffected.
+    """
+    if not ranges:
+        return
+    ra_masked = m.op("and", BV64, ra_source, m.const(BV64, 0xFFFF_FFFF_FFFF_FFFE))
+    conds = []
+    for (start, end) in ranges:
+        below = m.op("ult", BV1, ra_masked, m.const(BV64, start))
+        at_or_above = m.op("ugte", BV1, ra_masked, m.const(BV64, end))
+        conds.append(m.op("or", BV1, below, at_or_above))
+    combined = conds[0]
+    for c in conds[1:]:
+        combined = m.op("and", BV1, combined, c)
+    m.constraint(combined)
 
 
 def _build_machine(
@@ -92,6 +154,7 @@ def _build_machine(
     *,
     prefix: str = "",
     shared_reg_inits: Optional[dict[int, Node]] = None,
+    include_fns: Optional[list[str]] = None,
 ) -> _Machine:
     """Build the shared machine model (regs, pc, mem, transition
     relation, entry assumptions) for a function. Verb-specific
@@ -103,8 +166,22 @@ def _build_machine(
     → initial-value expression; both sides of an equivalence
     product pass the same map, so their cycle-0 register states
     are equated without forcing equality at later cycles.
+
+    `include_fns`, when non-empty, names additional functions to
+    fold into the PC dispatch. Their instructions are decoded and
+    added to the transition relation so intra-set `jal`s land on
+    real instructions and callee `ret`s legitimately return to
+    caller PCs. The ra entry assumption is widened to exclude the
+    union of all included fns' PC ranges. This is how Track C
+    supports non-leaf analysis.
     """
-    fn = binary.function(function_name)
+    entry_fn = binary.function(function_name)
+    extra_fns = [binary.function(n) for n in (include_fns or [])]
+    included = [entry_fn] + extra_fns
+    assumptions = EntryAssumptions(
+        excluded_pc_ranges=tuple((f.start, f.end) for f in included)
+    )
+
     m = builder if builder is not None else Model()
     havoc = set(havoc_regs) if havoc_regs else set()
     havoc.discard(0)                              # x0 is a constant, never havoc'd
@@ -121,24 +198,34 @@ def _build_machine(
             if shared_reg_inits is not None and i in shared_reg_inits:
                 m.init(state, shared_reg_inits[i])
 
-    if 1 not in havoc:
-        ra = regs[1]
-        ra_masked = m.op("and", BV64, ra, m.const(BV64, 0xFFFF_FFFF_FFFF_FFFE))
-        below = m.op("ult", BV1, ra_masked, m.const(BV64, fn.start))
-        at_or_above = m.op("ugte", BV1, ra_masked, m.const(BV64, fn.end))
-        m.constraint(m.op("or", BV1, below, at_or_above))
+    # ra cycle-0 assumption: the entry-time ra must point outside
+    # every analyzed function's PC range. We drive ra's init from
+    # a fresh input (`init_ra`) and constrain that input rather
+    # than ra itself — so after a `jal` writes `pc+4` into ra
+    # during execution, the constraint doesn't spuriously fire.
+    if 1 not in havoc and assumptions.excluded_pc_ranges:
+        if shared_reg_inits is not None and 1 in shared_reg_inits:
+            # Equivalence path: ra is already init'd to a shared
+            # input by the caller. Constrain the shared input so
+            # both sides' entry ra's agree.
+            ra_source = shared_reg_inits[1]
+        else:
+            ra_source = m.input(BV64, f"{prefix}init_ra")
+            m.init(regs[1], ra_source)
+        _assume_ra_outside_ranges(m, ra_source, assumptions.excluded_pc_ranges)
 
     pc = m.state(BV64, f"{prefix}pc")
-    m.init(pc, m.const(BV64, fn.start))
+    m.init(pc, m.const(BV64, entry_fn.start))
 
     decoded: list[tuple] = []
-    for inst in binary.instructions(fn):
-        d = decode(inst.word)
-        if d is None:
-            raise UnsupportedInstruction(inst.pc, inst.word)
-        if inst.size != d.size:
-            d = dataclasses.replace(d, size=inst.size)
-        decoded.append((inst, d))
+    for f in included:
+        for inst in binary.instructions(f):
+            d = decode(inst.word)
+            if d is None:
+                raise UnsupportedInstruction(inst.pc, inst.word)
+            if inst.size != d.size:
+                d = dataclasses.replace(d, size=inst.size)
+            decoded.append((inst, d))
     uses_memory = any(d.mnem in MEMORY_MNEMONICS for _, d in decoded)
 
     mem: Optional[Node] = None
@@ -177,7 +264,7 @@ def _build_machine(
         m.next(mem, next_mem)
         m.next(free_mem, free_mem)
 
-    return _Machine(m=m, regs=regs, pc=pc, mem=mem, decoded=decoded)
+    return _Machine(m=m, regs=regs, pc=pc, mem=mem, decoded=decoded, entry_fn=entry_fn)
 
 
 def build_reach(
@@ -185,6 +272,7 @@ def build_reach(
     spec: ReachSpec,
     builder: Optional[Model] = None,
     havoc_regs: Optional[set[int]] = None,
+    include_fns: Optional[list[str]] = None,
 ) -> Model:
     """Compile a ReachSpec into a BTOR2 Model.
 
@@ -204,7 +292,8 @@ def build_reach(
     is elided when ra (x1) is havoc'd, since the over-approximation
     already admits the path the constraint would have blocked.
     """
-    mc = _build_machine(binary, spec.function, builder, havoc_regs)
+    mc = _build_machine(binary, spec.function, builder, havoc_regs,
+                        include_fns=include_fns)
     # Reach obligation: pc == target.
     target = mc.m.const(BV64, spec.target_pc)
     mc.m.bad(mc.m.op("eq", BV1, mc.pc, target))
@@ -222,9 +311,14 @@ def _return_site_bad(mc: "_Machine", spec, function_name: str, *, negate: bool) 
     and the CEX is the synthesized input.
     """
     m = mc.m
+    # Observe only the entry function's rets — a callee's ret doesn't
+    # terminate the overall analysis, it just returns control to the
+    # caller whose instructions are also in the dispatch.
+    entry_range = (mc.entry_fn.start, mc.entry_fn.end)
     ret_pcs = [
         inst.pc for inst, d in mc.decoded
         if d.mnem == "jalr" and d.rd == 0 and d.rs1 == 1 and d.imm == 0
+        and entry_range[0] <= inst.pc < entry_range[1]
     ]
     if not ret_pcs:
         raise ValueError(
@@ -249,6 +343,7 @@ def build_verify(
     spec: "VerifySpec",
     builder: Optional[Model] = None,
     havoc_regs: Optional[set[int]] = None,
+    include_fns: Optional[list[str]] = None,
 ) -> Model:
     """Compile a VerifySpec into a BTOR2 Model.
 
@@ -259,13 +354,12 @@ def build_verify(
     makes the predicate fail at a return site.
 
     Identifying ret PCs is static: we scan `decoded` for `jalr
-    x0, x1, 0` (canonical `ret`). Functions that return through a
-    different jalr encoding (indirect dispatch back to the caller)
-    won't trigger, which is a current limitation; expanding to
-    "any jalr that targets an outside-fn PC per the ra-constraint"
-    is a natural refinement.
+    x0, x1, 0` (canonical `ret`) within the entry fn's PC range.
+    Callee rets (under `include_fns`) are not observation sites —
+    only the entry fn's rets count as the function returning.
     """
-    mc = _build_machine(binary, spec.function, builder, havoc_regs)
+    mc = _build_machine(binary, spec.function, builder, havoc_regs,
+                        include_fns=include_fns)
     mc.m.bad(_return_site_bad(mc, spec, spec.function, negate=True))
     return mc.m
 
@@ -275,6 +369,7 @@ def build_find_input(
     spec: "FindInputSpec",
     builder: Optional[Model] = None,
     havoc_regs: Optional[set[int]] = None,
+    include_fns: Optional[list[str]] = None,
 ) -> Model:
     """Compile a FindInputSpec into a BTOR2 Model.
 
@@ -285,7 +380,8 @@ def build_find_input(
     `unreachable` (bounded) or `proved` (unbounded) means no such
     input exists within the bound / on any execution path.
     """
-    mc = _build_machine(binary, spec.function, builder, havoc_regs)
+    mc = _build_machine(binary, spec.function, builder, havoc_regs,
+                        include_fns=include_fns)
     mc.m.bad(_return_site_bad(mc, spec, spec.function, negate=False))
     return mc.m
 
@@ -339,13 +435,17 @@ def build_equivalence(
         prefix="b_", shared_reg_inits=shared,
     )
 
+    range_a = (mc_a.entry_fn.start, mc_a.entry_fn.end)
+    range_b = (mc_b.entry_fn.start, mc_b.entry_fn.end)
     ret_pcs_a = [
         inst.pc for inst, d in mc_a.decoded
         if d.mnem == "jalr" and d.rd == 0 and d.rs1 == 1 and d.imm == 0
+        and range_a[0] <= inst.pc < range_a[1]
     ]
     ret_pcs_b = [
         inst.pc for inst, d in mc_b.decoded
         if d.mnem == "jalr" and d.rd == 0 and d.rs1 == 1 and d.imm == 0
+        and range_b[0] <= inst.pc < range_b[1]
     ]
     if not ret_pcs_a:
         raise ValueError(f"function {function_a!r} (side A) has no ret instruction")
