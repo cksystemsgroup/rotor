@@ -19,7 +19,9 @@ from rotor.ir import (
     BTOR2Emitter, DagEmitter, EquivalenceSpec, FindInputSpec, IdentityEmitter,
     QuestionSpec, ReachSpec, SsaEmitter, VerifySpec,
 )
-from rotor.solvers import BitwuzlaBMC, BtorMC, CVC5BMC, Portfolio, PortfolioEntry, Ric3, Z3BMC, Z3Spacer
+from rotor.solvers import (
+    BitwuzlaBMC, BtorMC, CVC5BMC, Pono, Portfolio, PortfolioEntry, Ric3, Z3BMC, Z3Spacer,
+)
 from rotor.trace import Trace
 
 __all__ = [
@@ -47,6 +49,7 @@ __all__ = [
     "Z3Spacer",
     "BitwuzlaBMC",
     "CVC5BMC",
+    "Pono",
     "Ric3",
     "BtorMC",
     "CegarConfig",

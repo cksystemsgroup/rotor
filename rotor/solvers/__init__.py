@@ -5,6 +5,9 @@ reach/verify/... questions.
     BitwuzlaBMC  — bounded BMC via Bitwuzla:   typically 3–5× faster on BV workloads
     CVC5BMC      — bounded BMC via CVC5:       uncorrelated with Z3/Bitwuzla
     Z3Spacer     — unbounded PDR via Z3:       `reachable` | `proved` | `unknown`
+    Pono         — subprocess bridge to Pono (Stanford):
+                     bmc / ind / ic3ia / mbic3 / ic3sa / interp modes;
+                     strong QF_ABV support via smt-switch
     Ric3         — subprocess bridge to rIC3 (Rust PDR);      unbounded
     BtorMC       — subprocess bridge to BtorMC (BMC/k-ind);   both modes
 
@@ -18,6 +21,7 @@ from typing import Optional
 
 from rotor.solvers.base import SolverBackend, SolverResult, Verdict
 from rotor.solvers.btormc import BtorMC
+from rotor.solvers.pono import Pono
 from rotor.solvers.portfolio import Portfolio, PortfolioEntry
 from rotor.solvers.ric3 import Ric3
 from rotor.solvers.z3bv import Z3BMC
@@ -62,6 +66,15 @@ def default_portfolio(bound: int = 20, timeout: Optional[float] = 30.0) -> Portf
         p.add(BitwuzlaBMC(), bound=bound, timeout=timeout)
     if CVC5BMC is not None:
         p.add(CVC5BMC(), bound=bound, timeout=timeout)
+    # Pono: two distinct engines in the race when installed — its
+    # `bmc` mode competes with Bitwuzla/CVC5/Z3 on BV, and its
+    # `ic3ia` mode competes with Z3Spacer on unbounded PDR. They
+    # count as separate Portfolio entries because they're genuinely
+    # different algorithms sharing one binary.
+    pono_bmc = Pono(mode="bmc")
+    if pono_bmc.available:
+        p.add(pono_bmc, bound=bound, timeout=timeout)
+        p.add(Pono(mode="ic3ia"), bound=0, timeout=timeout)
     ric3 = Ric3()
     if ric3.available:
         p.add(ric3, bound=0, timeout=timeout)
@@ -79,6 +92,7 @@ __all__ = [
     "Z3Spacer",
     "BitwuzlaBMC",
     "CVC5BMC",
+    "Pono",
     "Ric3",
     "BtorMC",
     "Portfolio",
