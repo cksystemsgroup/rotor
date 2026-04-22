@@ -18,7 +18,7 @@ from typing import Callable, Optional, Union
 
 from rotor.binary import RISCVBinary
 from rotor.ir.emitter import BTOR2Emitter, IdentityEmitter
-from rotor.ir.spec import Comparison, FindInputSpec, ReachSpec, VerifySpec
+from rotor.ir.spec import Comparison, EquivalenceSpec, FindInputSpec, ReachSpec, VerifySpec
 from rotor.solvers.base import SolverBackend, SolverResult
 from rotor.solvers.portfolio import Portfolio
 from rotor.solvers.z3bv import Z3BMC
@@ -162,6 +162,40 @@ class RotorEngine:
             comparison=comparison, rhs=rhs,
         )
         model = self._emitter.emit(spec)
+        executor = self._executor()
+        if isinstance(executor, Portfolio):
+            return executor.check_reach(model)
+        return executor.check_reach(
+            model,
+            bound=bound if bound is not None else self.config.default_bound,
+            timeout=timeout if timeout is not None else self.config.default_timeout,
+        )
+
+    def check_equivalent(
+        self,
+        other: RISCVBinary,
+        function_a: str,
+        function_b: Optional[str] = None,
+        output_register: int = 10,
+        bound: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ) -> SolverResult:
+        """Check equivalence of `function_a` in this engine's binary
+        with `function_b` (default: same name) in `other`.
+
+        Bounded BMC only. `reachable` means the two sides disagree on
+        `output_register` at their respective return sites for some
+        shared initial-register input; `unreachable` means no
+        disagreement up to the bound. This is not a global
+        equivalence proof — that would require Spacer on the product,
+        which is future work.
+        """
+        from rotor.btor2.builder import build_equivalence
+        fn_b = function_b if function_b is not None else function_a
+        model = build_equivalence(
+            self.binary, function_a, other, fn_b,
+            output_register=output_register,
+        )
         executor = self._executor()
         if isinstance(executor, Portfolio):
             return executor.check_reach(model)

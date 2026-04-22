@@ -12,7 +12,9 @@ added by implementing BTOR2Emitter against the same QuestionSpec.
 
 from rotor.ir.dag import DagBuilder
 from rotor.ir.emitter import BTOR2Emitter, DagEmitter, IdentityEmitter, emit_btor2_bytes
-from rotor.ir.spec import Comparison, FindInputSpec, QuestionSpec, ReachSpec, VerifySpec
+from rotor.ir.spec import (
+    Comparison, EquivalenceSpec, FindInputSpec, QuestionSpec, ReachSpec, VerifySpec,
+)
 from rotor.ir.ssa import SsaEmitter
 
 __all__ = [
@@ -26,5 +28,6 @@ __all__ = [
     "ReachSpec",
     "VerifySpec",
     "FindInputSpec",
+    "EquivalenceSpec",
     "Comparison",
 ]

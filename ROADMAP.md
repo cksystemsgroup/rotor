@@ -177,18 +177,23 @@ want anything beyond reachability hit a wall.
    `negate: bool` flag is the only difference). Exposed as
    `api.find_input(...)` and `rotor find-input` CLI subcommand.
    Richer witness output (SARIF / JSON) is future work.
-3. **`are_equivalent(other_binary, function)`** — product
-   construction: two copies of the machine sharing inputs,
-   `bad = output_differs`. Closes the binary-level
-   refactoring-validation story.
+3. **`are_equivalent(other_binary, function)`** — ✅ **Shipped
+   (D.3).** Product construction: two copies of the machine run
+   in parallel inside one BTOR2 Model (state-prefixed `a_` /
+   `b_`) with all 31 architectural registers init'd from a
+   shared set of input nodes. Each side's output register is
+   latched at its first return; `bad = (both returned) ∧
+   (captured_a ≠ captured_b)`. Exposed as
+   `api.are_equivalent(other_binary_path, function)` and
+   `rotor equivalent` CLI subcommand. Scope: leaf functions
+   only (no shared memory); BMC only. Unbounded equivalence
+   via Spacer on the product is future work.
 
-**Exit criterion.** Each verb has a fixture, CLI subcommand, API
-method, and integration test. README Quick Start gets one example
-per verb.
-
-**Effort estimate.** ~3 weeks total, parallelizable. `verify`
-reuses `can_reach(unbounded=True)`; the other two need new
-`QuestionSpec` types.
+**Exit criterion.** ✅ Met. All three verbs (`verify`,
+`find_input`, `are_equivalent`) have fixtures, CLI subcommands,
+API methods, and integration tests. Together with `can_reach`
+and `cegar_reach`, rotor's advertised verb surface is fully
+shipped.
 
 ---
 

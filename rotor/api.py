@@ -36,15 +36,18 @@ class ReachResult:
     invariant: Optional[str] = None    # certificate when verdict == "proved"
 
 
-# `verify` and `find_input` reuse `ReachResult` — all three verbs
-# share the same verdict vocabulary and counterexample shape. The
-# asymmetry is interpretation:
-#   can_reach:   `reachable` = PC hit the target.
-#   verify:      `reachable` = predicate FAILED (CEX found).
-#   find_input:  `reachable` = predicate HOLDS (synthesis witness).
+# Every verb in rotor today reuses `ReachResult` — they share a
+# verdict vocabulary and counterexample shape. The asymmetry is in
+# interpretation:
+#   can_reach:       `reachable` = PC hit the target.
+#   verify:          `reachable` = predicate FAILED (CEX found).
+#   find_input:      `reachable` = predicate HOLDS (synthesis witness).
+#   are_equivalent:  `reachable` = two sides DISAGREE (divergence
+#                    witness found).
 # Use the verb you called to interpret the result.
 VerifyResult = ReachResult
 FindInputResult = ReachResult
+EquivalenceResult = ReachResult
 
 
 class RotorAPI:
@@ -186,6 +189,50 @@ class RotorAPI:
             function, register, comparison, rhs,
             bound=bound, timeout=timeout,
         )
+        return ReachResult(
+            verdict=result.verdict,
+            bound=result.bound,
+            step=result.step,
+            initial_regs=result.initial_regs,
+            elapsed=result.elapsed,
+            backend=result.backend,
+            trace=None,
+            invariant=None,
+        )
+
+    def are_equivalent(
+        self,
+        other_binary_path,
+        function: str,
+        function_b: Optional[str] = None,
+        output_register: int = 10,
+        bound: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ):
+        """Check whether this binary's `function` is semantically
+        equivalent to `other_binary_path`'s `function_b` (default:
+        same name) on the `output_register` at their return sites,
+        given identical initial-register inputs.
+
+        - `reachable` → disagreement found; `initial_regs` is the CEX.
+        - `unreachable` → no disagreement within BMC bound.
+        - `unknown` → solver gave up.
+
+        Scope today: leaf functions. Shared memory is not modeled;
+        functions that load/store will have independent memory on
+        each side, which can produce spurious disagreements for
+        non-leaf code. Unbounded equivalence via Spacer is future
+        work.
+        """
+        other = RISCVBinary(other_binary_path)
+        try:
+            result = self._engine.check_equivalent(
+                other, function_a=function, function_b=function_b,
+                output_register=output_register,
+                bound=bound, timeout=timeout,
+            )
+        finally:
+            other.close()
         return ReachResult(
             verdict=result.verdict,
             bound=result.bound,

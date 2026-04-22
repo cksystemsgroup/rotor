@@ -130,6 +130,25 @@ def build_parser() -> argparse.ArgumentParser:
                     help="BMC unroll bound (default: 20).")
     fi.set_defaults(func=cmd_find_input)
 
+    eq = sub.add_parser(
+        "equivalent",
+        help="Check whether two functions produce the same output register.",
+    )
+    eq.add_argument("elf_a", type=Path, help="First ELF binary.")
+    eq.add_argument("elf_b", type=Path, help="Second ELF binary.")
+    eq.add_argument("--function", required=True,
+                    help="Function name to compare. Use --function-b to pair "
+                         "differently-named functions.")
+    eq.add_argument("--function-b",
+                    help="Optional: second-side function name if it differs "
+                         "from --function.")
+    eq.add_argument("--output-register", default="a0",
+                    help="Register to compare at each side's ret "
+                         "(default: a0).")
+    eq.add_argument("--bound", type=int, default=20,
+                    help="BMC unroll bound (default: 20).")
+    eq.set_defaults(func=cmd_equivalent)
+
     rt = sub.add_parser(
         "btor2-roundtrip",
         help="Parse a BTOR2 file and re-emit it (diagnostics on stderr).",
@@ -344,6 +363,35 @@ def cmd_find_input(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
     # not the same as "safe" semantically, but the exit-code
     # convention treats "no bug found" as EXIT_OK to match the
     # ergonomics of `rotor reach`.
+    if r.verdict == "reachable":
+        return EXIT_FOUND
+    if r.verdict in ("unreachable", "proved"):
+        return EXIT_OK
+    return EXIT_UNKNOWN
+
+
+def cmd_equivalent(args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
+    output_reg = _parse_register(args.output_register)
+    with RotorAPI(args.elf_a, default_bound=args.bound) as api:
+        r = api.are_equivalent(
+            other_binary_path=args.elf_b,
+            function=args.function,
+            function_b=args.function_b,
+            output_register=output_reg,
+            bound=args.bound,
+        )
+
+    print(f"verdict  : {r.verdict}", file=out)
+    print(f"bound    : {r.bound}", file=out)
+    if r.step is not None:
+        print(f"step     : {r.step}", file=out)
+    print(f"elapsed  : {r.elapsed * 1000:.1f}ms", file=out)
+    print(f"backend  : {r.backend}", file=out)
+
+    # Exit-code semantics: `reachable` means disagreement found (the
+    # two sides differ — the "bug" in an equivalence question), so
+    # EXIT_FOUND (1). `unreachable` / `proved` means equivalent up
+    # to bound / globally — EXIT_OK.
     if r.verdict == "reachable":
         return EXIT_FOUND
     if r.verdict in ("unreachable", "proved"):

@@ -9,12 +9,14 @@ Phase 6 adds unbounded reasoning and abstraction refinement:
     from rotor import Z3Spacer, cegar_reach, CegarConfig
 """
 
-from rotor.api import FindInputResult, ReachResult, RotorAPI, VerifyResult
+from rotor.api import (
+    EquivalenceResult, FindInputResult, ReachResult, RotorAPI, VerifyResult,
+)
 from rotor.binary import Function, RISCVBinary
 from rotor.cegar import CegarConfig, cegar_reach
 from rotor.engine import EngineConfig, RotorEngine
 from rotor.ir import (
-    BTOR2Emitter, DagEmitter, FindInputSpec, IdentityEmitter,
+    BTOR2Emitter, DagEmitter, EquivalenceSpec, FindInputSpec, IdentityEmitter,
     QuestionSpec, ReachSpec, SsaEmitter, VerifySpec,
 )
 from rotor.solvers import BitwuzlaBMC, BtorMC, Portfolio, PortfolioEntry, Ric3, Z3BMC, Z3Spacer
@@ -29,6 +31,8 @@ __all__ = [
     "VerifySpec",
     "FindInputResult",
     "FindInputSpec",
+    "EquivalenceResult",
+    "EquivalenceSpec",
     "RotorEngine",
     "EngineConfig",
     "BTOR2Emitter",

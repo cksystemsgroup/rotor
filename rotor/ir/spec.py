@@ -62,6 +62,45 @@ class VerifySpec(QuestionSpec):
 
 
 @dataclass(frozen=True)
+class EquivalenceSpec(QuestionSpec):
+    """are_equivalent obligation: product construction over two
+    function bodies sharing an initial register state.
+
+    Two copies of the machine model run in parallel in the same
+    BTOR2 Model (state-prefixed `a_` and `b_`). Their cycle-0
+    registers are constrained to the same symbolic input values —
+    so the question is "do both sides produce the same output
+    register at their respective return sites, given identical
+    inputs?"
+
+        bad = (pc_a at any ret in fn_a)
+            ∧ (pc_b at any ret in fn_b)
+            ∧ (regs_a[output_register] ≠ regs_b[output_register])
+
+    - `reachable` → an input makes the two sides disagree; the
+      CEX is in initial_regs (prefixed with `a_` / `b_` by the
+      solver, but since arg regs are equated their values match
+      on both sides).
+    - `unreachable` (bounded) → no disagreement up to the BMC
+      bound. Not a global equivalence proof; a larger bound or
+      Spacer would be needed for that.
+    - `proved` (unbounded, future) → sides are equivalent on
+      every input.
+
+    Current scope: leaf functions only (no shared-memory story
+    yet). `fn_a` and `fn_b` must each contain at least one `ret`.
+    The two binaries must not have overlapping PC ranges for
+    their functions, otherwise the ra-outside-fn entry assumptions
+    conflict.
+    """
+    binary_a_path: str
+    function_a: str
+    binary_b_path: str
+    function_b: str
+    output_register: int = 10                       # a0 by default
+
+
+@dataclass(frozen=True)
 class FindInputSpec(QuestionSpec):
     """find_input obligation: synthesize an initial-register
     assignment such that `regs[register] OP rhs` holds at a return
