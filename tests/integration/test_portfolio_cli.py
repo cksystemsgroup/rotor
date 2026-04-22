@@ -27,9 +27,11 @@ def test_portfolio_reaches_ret_of_add2() -> None:
     )
     assert code == 1                              # reachable → EXIT_FOUND
     assert "verdict  : reachable" in out
-    # The fastest racer wins; it could be Z3 or Bitwuzla (or a subprocess
-    # engine if installed). Any bounded engine is acceptable here.
-    assert any(b in out for b in ("z3-bmc", "bitwuzla-bmc", "btormc"))
+    # The fastest racer wins; it could be Z3, Bitwuzla, CVC5, or a
+    # Pono engine if the binary is on PATH. Any bounded BMC is fine.
+    assert any(b in out for b in (
+        "z3-bmc", "bitwuzla-bmc", "cvc5-bmc", "pono-bmc",
+    ))
 
 
 def test_portfolio_proves_tiny_mask_safe() -> None:

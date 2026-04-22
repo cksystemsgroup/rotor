@@ -53,12 +53,11 @@ rotor/
 │   │   ├── base.py
 │   │   ├── z3bv.py              ← M1–M7: Z3 BMC backend (shipping)
 │   │   ├── z3spacer.py          ← Phase 6: Z3 Spacer PDR/IC3 backend (shipping)
-│   │   ├── portfolio.py
-│   │   ├── bitwuzla.py          ← deferred: additional BMC backend
-│   │   ├── btormc.py            ← deferred: native BTOR2 model checker
-│   │   ├── kind.py              ← deferred: shared k-induction driver
-│   │   └── ic3.py               ← deferred: external-engine subprocess bridges
-│   │                              (rIC3 / AVR / ABC), under the same Protocol
+│   │   ├── bitwuzla.py          ← Track A.1: Bitwuzla BMC (optional, `pip install bitwuzla`)
+│   │   ├── cvc5bmc.py           ← Track A P1: CVC5 BMC (optional, `pip install cvc5`)
+│   │   ├── pono.py              ← Track A P2: Pono multi-engine subprocess bridge
+│   │   │                          (bmc / ind / mbic3 / ic3ia / ic3sa / interp modes)
+│   │   └── portfolio.py
 │   ├── ir/                      ← L1–L3: internal representations
 │   │   ├── __init__.py
 │   │   ├── protocols.py         ← capability protocols

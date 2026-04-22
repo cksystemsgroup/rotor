@@ -1,8 +1,13 @@
 """Solver backend interface.
 
-Backends are pluggable: Z3 (in-process BMC) is the shipping engine;
-additional engines (Z3 Spacer for unbounded PDR, subprocess bridges to
-Bitwuzla / BtorMC / rIC3 / AVR) land under this same Protocol.
+Backends are pluggable. Under this same Protocol rotor ships:
+
+    Z3BMC         — bounded BMC via Z3                      (always)
+    Z3Spacer      — unbounded PDR via Z3                    (always)
+    BitwuzlaBMC   — bounded BMC via Bitwuzla                (pip install bitwuzla)
+    CVC5BMC       — bounded BMC via CVC5                    (pip install cvc5)
+    Pono          — multi-engine subprocess bridge
+                    (bmc / ind / mbic3 / ic3ia / ic3sa / interp)   (build from source)
 
 Verdict semantics:
 

@@ -29,9 +29,10 @@ pip install -e .
 ```
 
 Everything below uses `tests/fixtures/add2.elf` — a two-function test
-binary (`add2` and `sign`). Swap in your own RV64I ELF compiled with
-`-g` and `-march=rv64im` (no compressed instructions yet) to try it on
-real code.
+binary (`add2` and `sign`). Swap in your own ELF compiled with `-g`
+and any of `-march=rv64i`, `-march=rv64im`, or `-march=rv64imc` to
+try it on real code — rotor decodes the base ISA plus the M (mul /
+div / rem) and C (compressed) extensions end-to-end.
 
 ```console
 $ rotor info tests/fixtures/add2.elf --functions
