@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rotor"
+version = "0.0.0"
+description = "A minimal LLM-programmable platform for reasoning about RISC-V code."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["rotor*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

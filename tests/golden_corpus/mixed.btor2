@@ -1,0 +1,25 @@
+; Exercises a wider slice of the language: const variants, slice, sext,
+; ite, justice, output, fair.
+1 sort bitvec 1
+2 sort bitvec 4
+3 sort bitvec 8
+4 sort bitvec 32
+5 const 2 1010
+6 constd 3 -1
+7 consth 4 deadbeef
+8 input 1 cond
+9 input 4 a
+10 input 4 b
+11 ite 4 8 9 10 chosen
+12 slice 3 11 7 0 low_byte
+13 sext 4 12 24
+14 eq 1 13 11
+15 not 1 14
+16 bad 15 sext_breaks_id
+17 input 1 live
+18 not 1 17
+19 fair 18
+20 justice 2 17 18
+21 output 11 chosen_out
+22 input 1 assume_a
+23 constraint 22

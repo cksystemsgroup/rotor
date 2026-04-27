@@ -1,0 +1,20 @@
+; Tiny memory model: array of 8-bit bytes, 64-bit address; one cycle of
+; read-modify-write at a symbolic address.
+1 sort bitvec 1
+2 sort bitvec 8
+3 sort bitvec 64
+4 sort array 3 2 mem_sort
+5 state 4 mem
+6 input 3 addr
+7 read 2 5 6
+8 one 2
+9 add 2 7 8
+10 write 4 5 6 9
+11 next 4 5 10
+12 zero 2
+13 eq 1 7 12
+14 constraint 13
+15 ones 2
+16 read 2 5 6
+17 eq 1 16 15
+18 bad 17
