@@ -205,6 +205,23 @@ code lands.
 3. `gurdy/pairs/riscv_btor2/SCHEMA.md` — the first pair's translation
    contract (written in its phase)
 
+## Lineage
+
+Hurdy-gurdy descends from rotor, originally developed as part of selfie
+([`github.com/cksystemsteaching/selfie/tools/rotor.c`](https://github.com/cksystemsteaching/selfie/blob/main/tools/rotor.c)).
+The RISC-V-to-BTOR2 encoding choices in the `riscv-btor2` pair draw on
+rotor's design, and specific schema decisions may cite rotor as
+historical context.
+
+Hurdy-gurdy is not a port of rotor; it generalizes the architecture in
+several ways that are deliberate departures: the framework/pair
+separation hosts multiple language pairs rather than one fixed
+translation; reasoning lives entirely in the LLM rather than in
+built-in policies (no CEGAR loop, no portfolio dispatch, no automatic
+slicing); the per-pair schema is the authoritative contract rather
+than the C source. Implementation guidance flows from the schema and
+the framework protocols, not from rotor's source code.
+
 ## License
 
 MIT.
